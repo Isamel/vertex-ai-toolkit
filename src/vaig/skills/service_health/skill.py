@@ -35,10 +35,12 @@ from vaig.skills.service_health.prompts import (
     build_logging_gatherer_prompt,
     build_node_gatherer_prompt,
     build_reporter_prompt,
+    build_verifier_ratification_section,
     build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.prompts._shared import _prefix_attachment_context
 from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema
+from vaig.skills.service_health.schema import apply_ratification as _apply_ratification
 from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
@@ -756,7 +758,10 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
                 "tool_categories": ["kubernetes", "scaling", "mesh", "datadog"],
-                "system_instruction": _prefix_attachment_context(HEALTH_VERIFIER_PROMPT, attachment_context),
+                "system_instruction": _prefix_attachment_context(
+                    HEALTH_VERIFIER_PROMPT + build_verifier_ratification_section(attachment_priors_json),
+                    attachment_context,
+                ),
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
                 "temperature": 0.2,  # Low temp for precise verification
@@ -1121,7 +1126,10 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
                 "tool_categories": ["kubernetes", "scaling", "mesh", "datadog", "logging", "monitoring"],
-                "system_instruction": _prefix_attachment_context(HEALTH_VERIFIER_PROMPT, attachment_context),
+                "system_instruction": _prefix_attachment_context(
+                    HEALTH_VERIFIER_PROMPT + build_verifier_ratification_section(attachment_priors_json),
+                    attachment_context,
+                ),
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
                 "temperature": 0.2,
@@ -1192,6 +1200,16 @@ class ServiceHealthSkill(BaseSkill):
             causal_findings = apply_contradiction_rules(report)
             if causal_findings:
                 report = report.model_copy(update={"findings": report.findings + causal_findings})
+
+            # ── SPEC-ATT-10 §6.5.3: Verifier ratification pass ─────────────
+            if report.ratification_json:
+                try:
+                    report = _apply_ratification(report, report.ratification_json)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Verifier ratification pass failed — findings unchanged",
+                        exc_info=True,
+                    )
 
             # Warn if report has no meaningful data
             if not report.findings and not report.service_statuses:

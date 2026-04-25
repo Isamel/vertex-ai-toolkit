@@ -391,6 +391,161 @@ class AttachmentRef(BaseModel):
     relevance: str = Field(default="", description="Brief note on how this attachment influenced the finding")
 
 
+# ── ATT-10 §6.5.3 — Verifier ratification models ────────────────────────────
+
+
+class FindingRatification(BaseModel):
+    """Ratification record for a single finding produced by the Verifier agent.
+
+    Parsed from the ``RATIFICATION_JSON`` block emitted by the verifier.
+    Populated post-hoc by :func:`apply_ratification` — never by the Gemini
+    reporter LLM.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    finding_title: str = Field(default="", description="Exact finding title as emitted by the verifier")
+    ratified_source_support: str = Field(
+        default="live_only",
+        description="Verifier-confirmed source_support classification (SPEC-ATT-10 §6.5.3)",
+    )
+    confidence_override: str | None = Field(
+        default=None,
+        description="Override confidence level when the tool call result drove a change; None to leave unchanged",
+    )
+    ratification_note: str = Field(
+        default="",
+        description="One-sentence note explaining what tool-call result drove this classification",
+    )
+
+
+class RatificationResult(BaseModel):
+    """Container for all finding ratification records from a single Verifier pass.
+
+    Parsed from the ``RATIFICATION_JSON`` block in the verifier output and
+    applied to the ``HealthReport`` findings by :func:`apply_ratification`.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[FindingRatification] = Field(default_factory=list)
+
+
+_VALID_SOURCE_SUPPORT: frozenset[str] = frozenset(
+    {
+        "live_only",
+        "attachment_only",
+        "live_and_attachment_corroborated",
+        "live_matches_expected_state",
+        "live_with_attachment_enrichment",
+        "live_vs_attachment_contradicts",
+        "live_matches_known_incident_pattern",
+    }
+)
+
+_VALID_CONFIDENCE_OVERRIDES: frozenset[str] = frozenset(
+    {"CONFIRMED", "HIGH", "MEDIUM", "LOW", "UNVERIFIABLE"}
+)
+
+
+def apply_ratification(report: "HealthReport", ratification_json: str) -> "HealthReport":
+    """Apply verifier ratification data to a ``HealthReport``'s findings in-place.
+
+    Parses *ratification_json* as a ``RatificationResult`` (a JSON array of
+    :class:`FindingRatification` objects).  For each entry, locates the
+    matching finding by title (case-insensitive, stripped) and applies:
+
+    - ``source_support`` — updated when the ratified value is a valid member
+      of the ``source_support`` Literal.  Invalid values fall back to
+      ``"live_only"`` with a warning.
+    - ``confidence`` — updated when ``confidence_override`` is a non-null
+      valid confidence level.  Invalid values are ignored with a warning.
+
+    The operation is **best-effort**: any parsing or matching failure is
+    logged as a warning and the original report is returned unchanged.
+
+    Args:
+        report: The parsed ``HealthReport`` to enrich in-place.
+        ratification_json: JSON string from the verifier's ``RATIFICATION_JSON``
+            block, or ``""`` / ``"[]"`` when no ratification was emitted.
+
+    Returns:
+        The (possibly mutated) ``HealthReport`` with updated findings.
+    """
+    import json as _json  # noqa: PLC0415
+
+    if not ratification_json or ratification_json.strip() in ("", "[]"):
+        return report
+
+    try:
+        raw = _json.loads(ratification_json)
+    except _json.JSONDecodeError:
+        logger.warning(
+            "apply_ratification: failed to parse ratification_json as JSON — skipping. "
+            "Input starts with: %.120s",
+            ratification_json,
+        )
+        return report
+
+    if not isinstance(raw, list):
+        logger.warning("apply_ratification: expected JSON array, got %s — skipping", type(raw).__name__)
+        return report
+
+    try:
+        result = RatificationResult(items=[FindingRatification.model_validate(item) for item in raw])
+    except Exception:  # noqa: BLE001
+        logger.warning("apply_ratification: RatificationResult validation failed — skipping", exc_info=True)
+        return report
+
+    if not result.items:
+        return report
+
+    # Build a title→finding index (lower-stripped for fuzzy match)
+    index: dict[str, "Finding"] = {f.title.lower().strip(): f for f in report.findings}
+
+    updated = 0
+    for ratif in result.items:
+        key = ratif.finding_title.lower().strip()
+        finding = index.get(key)
+        if finding is None:
+            logger.debug(
+                "apply_ratification: no finding matched title %r — skipping entry",
+                ratif.finding_title,
+            )
+            continue
+
+        # Apply source_support
+        ss = ratif.ratified_source_support
+        if ss not in _VALID_SOURCE_SUPPORT:
+            logger.warning(
+                "apply_ratification: invalid ratified_source_support %r for finding %r — falling back to live_only",
+                ss,
+                ratif.finding_title,
+            )
+            ss = "live_only"
+        object.__setattr__(finding, "source_support", ss)
+
+        # Apply confidence override (optional)
+        co = ratif.confidence_override
+        if co is not None:
+            co_upper = co.upper().strip()
+            if co_upper in _VALID_CONFIDENCE_OVERRIDES:
+                object.__setattr__(finding, "confidence", co_upper)
+            else:
+                logger.warning(
+                    "apply_ratification: invalid confidence_override %r for finding %r — ignoring",
+                    co,
+                    ratif.finding_title,
+                )
+
+        updated += 1
+
+    if updated:
+        logger.info("apply_ratification: applied ratification to %d finding(s)", updated)
+
+    return report
+
+
 class AttachmentUsage(BaseModel):
     """Per-agent attachment usage record."""
 
@@ -1522,6 +1677,15 @@ class HealthReport(BaseModel):
             "fan-out completes. ``None`` when no attachments were provided; an empty "
             "``AttachmentPriors`` object when extraction was attempted but yielded no priors. "
             "Excluded from the Gemini response_schema."
+        ),
+    )
+    ratification_json: str = Field(
+        default="",
+        description=(
+            "Raw JSON array from the verifier's RATIFICATION_JSON block (SPEC-ATT-10 §6.5.3). "
+            "The reporter agent copies this verbatim from the verifier output. "
+            "Parsed and applied by post_process_report via apply_ratification(). "
+            "Empty string when no attachment priors were present."
         ),
     )
     investigation_coverage: str | None = Field(
