@@ -140,10 +140,6 @@ class TestGeminiClientProtocol:
             ) -> None:
                 pass
 
-            @property
-            def endpoint_flips(self) -> list[Any]:
-                return []
-
         fake = FakeClient()
         assert isinstance(fake, GeminiClientProtocol)
 
