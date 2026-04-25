@@ -55,7 +55,7 @@ class IacReviewSkill(BaseSkill):
                     "alterations, state drift between declared and actual infrastructure, "
                     "and any change that could cause downtime or data loss."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "drift_detector",
@@ -70,12 +70,12 @@ class IacReviewSkill(BaseSkill):
                     "tagging policy violations, and deviations from CIS Benchmarks, "
                     "SOC 2, HIPAA, and PCI-DSS requirements."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "iac_reviewer",
                 "role": "IaC Reviewer",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

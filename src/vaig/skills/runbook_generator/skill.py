@@ -52,7 +52,7 @@ class RunbookGeneratorSkill(BaseSkill):
                     "points and failure modes. You focus on who will execute the runbook, "
                     "what can go wrong, and what access and tools are required."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "step_writer",
@@ -65,12 +65,12 @@ class RunbookGeneratorSkill(BaseSkill):
                     "You write decision trees with clear if/then/else branching and include "
                     "time estimates for each step."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "runbook_lead",
                 "role": "Runbook Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

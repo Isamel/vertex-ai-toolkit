@@ -66,7 +66,7 @@ class DependencyAuditSkill(BaseSkill):
                     "dependencies are actually reachable in the application code path. "
                     "Distinguish between direct and transitive dependency vulnerabilities."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "license_analyst",
@@ -83,12 +83,12 @@ class DependencyAuditSkill(BaseSkill):
                     "open issue trends, and known security incidents. Flag packages with "
                     "install scripts that execute arbitrary code."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "dependency_lead",
                 "role": "Dependency Audit Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

@@ -49,7 +49,7 @@ class MigrationSkill(BaseSkill):
                     "Extract: data flows, transformations, business logic, dependencies, "
                     "database connections, and variables. Produce a structured analysis."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "code_generator",
@@ -61,7 +61,7 @@ class MigrationSkill(BaseSkill):
                     "pushdown predicates, error handling, CloudWatch logging. "
                     "Code must be clean, documented, and testable."
                 ),
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
             {
                 "name": "migration_validator",
@@ -71,6 +71,6 @@ class MigrationSkill(BaseSkill):
                     "target code for functional equivalence. Identify gaps, behavioral "
                     "differences, and edge cases. Generate test cases and validation queries."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
         ]

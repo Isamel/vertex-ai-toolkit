@@ -45,7 +45,7 @@ class ConfigAuditSkill(BaseSkill):
                 "role": "Configuration Data Gatherer",
                 "requires_tools": True,
                 "system_instruction": CONFIG_AUDIT_GATHERER_PROMPT,
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "temperature": 0.0,
                 "max_iterations": 12,
             },
@@ -60,7 +60,7 @@ class ConfigAuditSkill(BaseSkill):
                     "missing network policies, container privilege escalation vectors, and "
                     "non-compliant settings per CIS benchmarks and NIST 800-53 controls."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "reliability_auditor",
@@ -73,6 +73,6 @@ class ConfigAuditSkill(BaseSkill):
                     "configurations, inadequate logging and monitoring setup, missing autoscaling "
                     "policies, and insufficient redundancy or fault tolerance settings."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
         ]

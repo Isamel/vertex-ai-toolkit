@@ -49,12 +49,12 @@ class ErrorTriageSkill(BaseSkill):
                     "identify all affected components. Focus on: error signatures, stack trace "
                     "patterns, failure domain isolation, and impact scope estimation."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "triage_coordinator",
                 "role": "Triage Coordinator",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

@@ -48,7 +48,7 @@ class LogAnalysisSkill(BaseSkill):
                 "role": "Log Data Gatherer",
                 "requires_tools": True,
                 "system_instruction": LOG_ANALYSIS_GATHERER_PROMPT,
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "temperature": 0.0,
                 "max_iterations": 10,
             },
@@ -61,7 +61,7 @@ class LogAnalysisSkill(BaseSkill):
                     "and anomalous log sequences. Focus on: error rates, burst patterns, "
                     "periodic failures, new error signatures, and log volume anomalies."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "context_analyzer",
@@ -72,12 +72,12 @@ class LogAnalysisSkill(BaseSkill):
                     "traffic patterns, dependency health, and infrastructure events. Identify "
                     "causal relationships between system changes and observed log anomalies."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "diagnostic_lead",
                 "role": "Diagnostic Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

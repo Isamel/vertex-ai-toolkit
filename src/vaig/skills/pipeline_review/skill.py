@@ -69,7 +69,7 @@ class PipelineReviewSkill(BaseSkill):
                     "actions for unpinned versions (@main instead of SHA), unverified "
                     "publishers, and excessive permissions."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "efficiency_analyzer",
@@ -87,12 +87,12 @@ class PipelineReviewSkill(BaseSkill):
                     "oversized runners for simple tasks, undersized runners causing OOM, and "
                     "spot instance opportunities."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "pipeline_lead",
                 "role": "Pipeline Review Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

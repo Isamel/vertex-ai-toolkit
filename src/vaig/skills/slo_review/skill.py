@@ -50,7 +50,7 @@ class SloReviewSkill(BaseSkill):
                     "critical user journeys, and whether SLIs capture actual user experience "
                     "rather than proxy infrastructure metrics."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "budget_strategist",
@@ -63,6 +63,6 @@ class SloReviewSkill(BaseSkill):
                     "and recommending specific SLO target adjustments backed by consumption data "
                     "and Google SRE best practices."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
         ]

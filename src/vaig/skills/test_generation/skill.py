@@ -55,7 +55,7 @@ class TestGenerationSkill(BaseSkill):
                     "and integration points. You assess risk and complexity to guide test "
                     "effort allocation."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "test_writer",
@@ -71,7 +71,7 @@ class TestGenerationSkill(BaseSkill):
                     "assertion messages that explain the expectation. Your tests are "
                     "deterministic, independent, and fast."
                 ),
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
             {
                 "name": "coverage_analyzer",
@@ -87,6 +87,6 @@ class TestGenerationSkill(BaseSkill):
                     "current suite. You produce quantified coverage reports with actionable "
                     "improvement priorities."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
         ]

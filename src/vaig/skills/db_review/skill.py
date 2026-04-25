@@ -67,7 +67,7 @@ class DbReviewSkill(BaseSkill):
                     "hot tables, and missing row-level locking hints. Quantify estimated vs actual "
                     "row counts to detect stale statistics causing plan regression."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "schema_reviewer",
@@ -84,12 +84,12 @@ class DbReviewSkill(BaseSkill):
                     "requirements, lock duration estimation, backward compatibility of pending "
                     "changes, and data migration correctness."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "database_lead",
                 "role": "Database Review Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

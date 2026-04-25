@@ -69,12 +69,12 @@ class AdrGeneratorSkill(BaseSkill):
                     "constraints (non-negotiable) from soft constraints (preferences). Identify "
                     "any existing ADRs or documented decisions this new decision relates to."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "adr_author",
                 "role": "ADR Author",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

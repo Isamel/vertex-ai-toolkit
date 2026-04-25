@@ -47,7 +47,7 @@ class ComplianceCheckSkill(BaseSkill):
                 "role": "Compliance Data Gatherer",
                 "requires_tools": True,
                 "system_instruction": COMPLIANCE_GATHERER_PROMPT,
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "temperature": 0.0,
                 "max_iterations": 12,
             },
@@ -61,7 +61,7 @@ class ComplianceCheckSkill(BaseSkill):
                     "of each control. You are deeply familiar with SOC 2, ISO 27001, HIPAA, "
                     "PCI-DSS, GDPR, FedRAMP, NIST 800-53, and CIS Benchmarks."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "gap_auditor",
@@ -73,12 +73,12 @@ class ComplianceCheckSkill(BaseSkill):
                     "You identify missing evidence, misconfigured controls, and security gaps. "
                     "You rate each finding by severity and provide specific remediation steps."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "compliance_lead",
                 "role": "Compliance Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]
