@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from vaig.core.repo_chunkers import FallbackLineChunker, chunk_file, get_chunker
 from vaig.core.repo_pipeline import detect_file_kind
-
 
 # ── Helm template detection ────────────────────────────────────────────────────
 
