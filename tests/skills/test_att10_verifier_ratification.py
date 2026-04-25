@@ -20,6 +20,7 @@ from vaig.skills.service_health.prompts import (
     extract_ratification_json,
 )
 from vaig.skills.service_health.schema import (
+    Confidence,
     Finding,
     FindingRatification,
     HealthReport,
@@ -128,7 +129,8 @@ class TestApplyRatification:
         )
         result = apply_ratification(report, ratif_json)
         assert result.findings[0].source_support == "live_vs_attachment_contradicts"
-        assert result.findings[0].confidence == "CONFIRMED"
+        assert result.findings[0].confidence == Confidence.CONFIRMED
+        assert isinstance(result.findings[0].confidence, Confidence)
 
     def test_invalid_source_support_falls_back_to_live_only(self) -> None:
         finding = _minimal_finding("Memory Pressure")
@@ -257,9 +259,11 @@ class TestApplyRatification:
         )
         result = apply_ratification(report, ratif_json)
         assert result.findings[0].source_support == "live_and_attachment_corroborated"
-        assert result.findings[0].confidence == "CONFIRMED"
+        assert result.findings[0].confidence == Confidence.CONFIRMED
+        assert isinstance(result.findings[0].confidence, Confidence)
         assert result.findings[1].source_support == "live_vs_attachment_contradicts"
-        assert result.findings[1].confidence == "MEDIUM"
+        assert result.findings[1].confidence == Confidence.MEDIUM
+        assert isinstance(result.findings[1].confidence, Confidence)
 
     def test_no_findings_report_noop(self) -> None:
         report = _minimal_report([])
@@ -361,11 +365,8 @@ class TestHealthReportRatificationJsonField:
         """model_validate_json accepts ratification_json and preserves it."""
         payload = '[{"finding_title": "Test", "ratified_source_support": "live_only"}]'
         report = _minimal_report()
-        dumped = report.model_dump_json()
-        # Inject ratification_json manually via dict round-trip
-        import json as _json
-
-        d = _json.loads(dumped)
+        d = report.model_dump()
         d["ratification_json"] = payload
-        rebuilt = HealthReport.model_validate(_json.loads(_json.dumps(d)))
+        json_str = json.dumps(d)
+        rebuilt = HealthReport.model_validate_json(json_str)
         assert rebuilt.ratification_json == payload

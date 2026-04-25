@@ -732,8 +732,10 @@ Rules:
 
 ### ATT-10 §6.5.3 — Ratification JSON passthrough (MANDATORY when present)
 If the verifier output contains a ``RATIFICATION_JSON`` … ``END_RATIFICATION_JSON`` block,
-copy the JSON array verbatim into the ``ratification_json`` field of the top-level report object.
-Do NOT interpret or modify the JSON — copy it as a raw string.
+place that JSON array into the top-level report object's ``ratification_json`` field as a JSON string value.
+Preserve the array content exactly, but encode it as the string contents of ``ratification_json`` in the final
+report (that is, quoted/escaped as needed for a string field; do NOT emit the array directly as the field value).
+Do NOT interpret, reformat, or modify the JSON beyond the escaping required to represent it as a string value.
 If no such block is present, set ``ratification_json`` to ``""``.
 {datadog_api_section}"""
     return _prefix_attachment_context(result, attachment_context)

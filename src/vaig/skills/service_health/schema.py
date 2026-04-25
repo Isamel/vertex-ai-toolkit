@@ -527,7 +527,7 @@ def apply_ratification(report: HealthReport, ratification_json: str) -> HealthRe
         if co is not None:
             co_upper = co.upper().strip()
             if co_upper in _VALID_CONFIDENCE_OVERRIDES:
-                object.__setattr__(finding, "confidence", co_upper)
+                object.__setattr__(finding, "confidence", Confidence(co_upper))
             else:
                 logger.warning(
                     "apply_ratification: invalid confidence_override %r for finding %r — ignoring",
