@@ -182,14 +182,19 @@ def supports_thinking(model_name: str, extra_prefixes: list[str] | None = None) 
 
     Args:
         model_name: The model identifier to check.
-        extra_prefixes: Additional prefixes loaded from
-            ``ModelsConfig.thinking_capable_prefixes``.  When provided,
-            these take precedence and the hard-coded
-            :data:`THINKING_CAPABLE_MODELS` constant is also consulted as
-            a fallback so old callers that pass no extra prefixes continue
-            to work correctly.
+        extra_prefixes: Prefixes loaded from
+            ``ModelsConfig.thinking_capable_prefixes``.  When provided
+            (including an empty list), they are unioned with the
+            hard-coded :data:`THINKING_CAPABLE_MODELS` constant so that
+            YAML-configured prefixes extend the built-in list rather than
+            replacing it.  Pass ``None`` (the default) to use only the
+            built-in constant — backwards-compatible with callers that
+            pre-date YAML-driven configuration.
     """
-    all_prefixes: list[str] | frozenset[str] = extra_prefixes if extra_prefixes else THINKING_CAPABLE_MODELS
+    if extra_prefixes is not None:
+        all_prefixes: tuple[str, ...] | frozenset[str] = tuple(extra_prefixes) + tuple(THINKING_CAPABLE_MODELS)
+    else:
+        all_prefixes = THINKING_CAPABLE_MODELS
     return any(model_name.startswith(prefix) for prefix in all_prefixes)
 
 
@@ -227,13 +232,18 @@ class ModelsConfig(BaseModel):
     available: list[ModelInfo] = Field(default_factory=list)
 
     thinking_capable_prefixes: list[str] = Field(
-        default_factory=lambda: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3"],
+        default_factory=list,
     )
     """Model ID prefixes that support Gemini thinking mode.
 
+    Defaults to ``[]`` so that ``config/default.yaml`` is the single source of
+    truth.  The hard-coded :data:`THINKING_CAPABLE_MODELS` constant is always
+    consulted as a fallback by :func:`supports_thinking`, so omitting this field
+    (or leaving it empty) still detects all built-in thinking-capable models.
+
     Prefix matching is used so versioned variants (e.g. ``gemini-2.5-pro-001``)
-    are detected automatically.  Add new model family prefixes here — or in
-    ``config/default.yaml`` under ``models.thinking_capable_prefixes`` — to
+    are detected automatically.  Add new model family prefixes in
+    ``config/default.yaml`` under ``models.thinking_capable_prefixes`` to
     enable thinking for them without any code change.
     """
 

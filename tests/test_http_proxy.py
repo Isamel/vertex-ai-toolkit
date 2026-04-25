@@ -3,12 +3,14 @@
 Verifies that:
 - No proxy → httpx_client/httpx_async_client are None (SDK default transport).
 - gcp.http_proxy set → httpx clients injected with the proxy URL.
-- gcp.http_proxy="none" → proxy suppressed even when env var is present.
-- Env var HTTP_PROXY / HTTPS_PROXY respected when gcp.http_proxy is empty.
+- gcp.http_proxy="none" → trust_env=False suppresses env proxies reliably.
+- Env var HTTP_PROXY / HTTPS_PROXY detected and logged (not passed to httpx).
+- Proxy credentials are redacted from log output.
 """
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 from vaig.core.config import GCPConfig, Settings
@@ -39,13 +41,10 @@ class TestBuildHttpOptionsProxy:
         settings = _make_settings(http_proxy="", project_id="proj")
         client = _make_client(settings)
 
+        for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            os.environ.pop(var, None)
+
         with patch.dict("os.environ", {}, clear=False):
-            # Remove proxy env vars if present
-            import os
-
-            for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
-                os.environ.pop(var, None)
-
             http_opts = client._build_http_options()
 
         assert http_opts.httpx_client is None
@@ -74,20 +73,33 @@ class TestBuildHttpOptionsProxy:
         assert isinstance(http_opts.httpx_client, httpx.Client)
         assert isinstance(http_opts.httpx_async_client, httpx.AsyncClient)
 
-    def test_proxy_none_sentinel_suppresses_env_proxy(self) -> None:
-        """gcp.http_proxy='none' → httpx clients injected with proxy=None (env suppressed)."""
+    def test_proxy_none_sentinel_uses_trust_env_false(self) -> None:
+        """gcp.http_proxy='none' → clients use trust_env=False to suppress env proxies."""
+        import httpx
+
         settings = _make_settings(http_proxy="none", project_id="proj")
         client = _make_client(settings)
 
         with patch.dict("os.environ", {"HTTPS_PROXY": "http://should-be-ignored:8080"}):
             http_opts = client._build_http_options()
 
-        # Clients ARE injected (to override env-var-based transport) but with proxy=None
-        assert http_opts.httpx_client is not None
-        assert http_opts.httpx_async_client is not None
+        # Clients ARE injected with trust_env=False
+        assert isinstance(http_opts.httpx_client, httpx.Client)
+        assert isinstance(http_opts.httpx_async_client, httpx.AsyncClient)
+
+    def test_proxy_none_sentinel_case_insensitive(self) -> None:
+        """gcp.http_proxy='NONE' (uppercase) is also treated as sentinel."""
+        import httpx
+
+        settings = _make_settings(http_proxy="NONE", project_id="proj")
+        client = _make_client(settings)
+
+        http_opts = client._build_http_options()
+
+        assert isinstance(http_opts.httpx_client, httpx.Client)
 
     def test_env_var_https_proxy_logs_info(self) -> None:
-        """HTTPS_PROXY env var is detected and logged."""
+        """HTTPS_PROXY env var is detected and logged (redacted)."""
         settings = _make_settings(http_proxy="", project_id="proj")
         client = _make_client(settings)
 
@@ -99,7 +111,28 @@ class TestBuildHttpOptionsProxy:
 
         mock_logger.info.assert_called_once()
         call_args = mock_logger.info.call_args[0]
-        assert "http://env-proxy:9090" in call_args[1]
+        # Host and port present in log message
+        assert "env-proxy" in call_args[1]
+        assert "9090" in call_args[1]
+
+    def test_credentials_redacted_from_log(self) -> None:
+        """Proxy URL with user:pass credentials is redacted before logging."""
+        settings = _make_settings(
+            http_proxy="http://user:s3cr3t@proxy.corp.example.com:8080",
+            project_id="proj",
+        )
+        client = _make_client(settings)
+
+        with patch("vaig.core.client.logger") as mock_logger:
+            client._build_http_options()
+
+        mock_logger.info.assert_called_once()
+        logged_url = mock_logger.info.call_args[0][1]
+        # Credentials must NOT appear in log
+        assert "user" not in logged_url
+        assert "s3cr3t" not in logged_url
+        # Host must be present
+        assert "proxy.corp.example.com" in logged_url
 
     def test_retry_options_always_present(self) -> None:
         """retry_options are always set regardless of proxy config."""

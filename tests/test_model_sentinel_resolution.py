@@ -115,3 +115,38 @@ class TestAgentConfigEffectiveModel:
             system_instruction="do stuff",
         )
         assert cfg.effective_model("gemini-fallback") == "gemini-fallback"
+
+
+class TestSupportsThinking:
+    """supports_thinking() uses is-not-None check and unions extra_prefixes."""
+
+    def test_builtin_model_detected_without_extra_prefixes(self) -> None:
+        from vaig.core.config import supports_thinking
+
+        assert supports_thinking("gemini-2.5-pro") is True
+        assert supports_thinking("gemini-2.5-flash-001") is True
+
+    def test_unknown_model_returns_false(self) -> None:
+        from vaig.core.config import supports_thinking
+
+        assert supports_thinking("some-other-model") is False
+
+    def test_empty_extra_prefixes_does_not_disable_builtins(self) -> None:
+        """extra_prefixes=[] → union with THINKING_CAPABLE_MODELS, builtins still work."""
+        from vaig.core.config import supports_thinking
+
+        assert supports_thinking("gemini-2.5-pro", extra_prefixes=[]) is True
+
+    def test_custom_prefix_added_via_extra_prefixes(self) -> None:
+        """Extra prefix extends detection without removing builtins."""
+        from vaig.core.config import supports_thinking
+
+        assert supports_thinking("my-custom-thinking-model", extra_prefixes=["my-custom"]) is True
+        assert supports_thinking("gemini-2.5-pro", extra_prefixes=["my-custom"]) is True
+
+    def test_none_extra_prefixes_uses_only_builtins(self) -> None:
+        """extra_prefixes=None → only THINKING_CAPABLE_MODELS consulted."""
+        from vaig.core.config import supports_thinking
+
+        assert supports_thinking("gemini-3-flash", extra_prefixes=None) is True
+        assert supports_thinking("unknown-model", extra_prefixes=None) is False

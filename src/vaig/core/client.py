@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import random
 import ssl
 import threading
@@ -362,14 +363,17 @@ class GeminiClient:
         the underlying HTTP transport retries transient errors (429, 5xx)
         automatically — before vaig's own application-level retry even kicks in.
 
-        When ``gcp.http_proxy`` is set (or the ``HTTP_PROXY`` / ``HTTPS_PROXY``
-        / ``ALL_PROXY`` environment variables are present), injects a proxy-aware
+        When ``gcp.http_proxy`` is set, injects a proxy-aware
         ``httpx.Client`` / ``httpx.AsyncClient`` pair so all Vertex AI traffic
         flows through the configured proxy.  Set ``gcp.http_proxy = "none"`` to
-        disable proxy even when the env vars are set.
-        """
-        import os
+        disable proxy even when ``HTTP_PROXY`` / ``HTTPS_PROXY`` / ``ALL_PROXY``
+        env vars are set (uses ``trust_env=False``).  When ``gcp.http_proxy`` is
+        empty the SDK's default transport is used, so env-var proxies (including
+        ``NO_PROXY`` semantics) continue to work through httpx natively.
 
+        Proxy URLs containing credentials (``user:pass@host``) are redacted
+        to ``scheme://host:port`` before being written to the log.
+        """
         retry_cfg = self._settings.retry
         retry_options = types.HttpRetryOptions(
             attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
@@ -383,35 +387,39 @@ class GeminiClient:
         # ── Proxy resolution ─────────────────────────────────────────────────
         # Priority: gcp.http_proxy > env vars (httpx default behaviour).
         # The sentinel value "none" disables proxy even when env vars are set.
-        proxy_url: str | None = None
         cfg_proxy = self._settings.gcp.http_proxy.strip()
-        if cfg_proxy.lower() == "none":
-            # Explicitly disabled — pass empty mounts to suppress env-var proxies.
-            proxy_url = None
-            suppress_env_proxy = True
-        elif cfg_proxy:
-            proxy_url = cfg_proxy
-            suppress_env_proxy = False
-        else:
-            # Check env vars ourselves only for logging purposes; httpx picks
-            # them up automatically when no explicit proxy is passed.
-            proxy_url = (
-                os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY")
-            ) or None
-            suppress_env_proxy = False
-
-        if proxy_url:
-            logger.info("HTTP proxy configured for Vertex AI calls: %s", proxy_url)
-
-        # Build httpx clients only when we need to influence proxy behaviour.
-        # Otherwise let the SDK use its own default transport (avoids overhead).
         httpx_client: httpx.Client | None = None
         httpx_async_client: httpx.AsyncClient | None = None
 
-        if proxy_url or suppress_env_proxy:
-            proxy_arg = proxy_url  # None when suppressing env proxies
-            httpx_client = httpx.Client(proxy=proxy_arg)
-            httpx_async_client = httpx.AsyncClient(proxy=proxy_arg)
+        def _safe_proxy_url(raw: str) -> str:
+            """Return scheme://host:port — strips userinfo to avoid credential leaks."""
+            u = httpx.URL(raw)
+            port_part = f":{u.port}" if u.port else ""
+            return f"{u.scheme}://{u.host}{port_part}"
+
+        if cfg_proxy.lower() == "none":
+            # Explicitly disabled — trust_env=False prevents httpx from picking
+            # up HTTP_PROXY / HTTPS_PROXY / ALL_PROXY from the environment.
+            httpx_client = httpx.Client(trust_env=False)
+            httpx_async_client = httpx.AsyncClient(trust_env=False)
+        elif cfg_proxy:
+            # Explicit proxy URL — inject into httpx clients.
+            logger.info("HTTP proxy configured for Vertex AI calls: %s", _safe_proxy_url(cfg_proxy))
+            httpx_client = httpx.Client(proxy=cfg_proxy)
+            httpx_async_client = httpx.AsyncClient(proxy=cfg_proxy)
+        else:
+            # No explicit config — let the SDK's default transport handle env vars
+            # natively (preserves NO_PROXY, scheme-specific selection, etc.).
+            # Log only for observability; do NOT pass env proxy to httpx manually.
+            env_proxy = (
+                os.environ.get("HTTPS_PROXY")
+                or os.environ.get("https_proxy")
+                or os.environ.get("HTTP_PROXY")
+                or os.environ.get("http_proxy")
+                or os.environ.get("ALL_PROXY")
+            )
+            if env_proxy:
+                logger.info("HTTP proxy detected from environment: %s", _safe_proxy_url(env_proxy))
 
         return types.HttpOptions(
             retry_options=retry_options,
