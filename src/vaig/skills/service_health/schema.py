@@ -1820,9 +1820,8 @@ class HealthReport(BaseModel):
         description=(
             "Pipeline operating mode (SPEC-ATT-10 §6.5.5). "
             "Populated post-hoc by skill.py via _detect_operating_mode(). "
-            "Excluded from the Gemini response_schema."
+            "Excluded from the Gemini response_schema via _GEMINI_EXCLUDED_FIELDS."
         ),
-        exclude=True,
     )
 
     @field_validator("overall_severity_reason", mode="before")
@@ -1936,6 +1935,13 @@ class HealthReport(BaseModel):
         Recent Changes → Quick Links → Evidence Gaps → Investigation Coverage.
         """
         parts: list[str] = []
+        if self.operating_mode == OperatingMode.ATTACHMENT_ONLY:
+            parts.append(
+                "> ⚠ **ATTACHMENT_ONLY mode** — Live GKE/GCloud tool calls were disabled "
+                "(--offline-mode). Analysis is based exclusively on attached sources. "
+                "All findings are tagged `source_support='attachment_only'`."
+            )
+            parts.append("")
         parts.append("# Service Health Report")
         parts.append("")
         self._render_executive_summary(parts)

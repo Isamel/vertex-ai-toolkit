@@ -47,6 +47,7 @@ from vaig.cli.display import (
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
 from vaig.skills.service_health.diff import compute_report_diff
+from vaig.skills.service_health.skill import ServiceHealthSkill
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
@@ -1049,8 +1050,9 @@ def register(app: typer.Typer) -> None:
                 """
                 if active_skill is not None:
                     # ── SPEC-ATT-10 §6.5.5: set operating mode signals on skill ──
-                    active_skill._offline_mode = offline_mode  # type: ignore[attr-defined]
-                    active_skill._attachments_present = bool(_attachment_adapters)  # type: ignore[attr-defined]
+                    if isinstance(active_skill, ServiceHealthSkill):
+                        active_skill._offline_mode = offline_mode
+                        active_skill._attachments_present = bool(_attachment_adapters)
                     return _execute_orchestrated_skill(
                         client,
                         settings,

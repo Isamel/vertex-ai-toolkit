@@ -106,8 +106,13 @@ class TestHealthReportOperatingModeField:
         schema_str = json.dumps(schema)
         assert "operating_mode" not in schema_str
 
-    def test_excluded_from_model_dump(self) -> None:
-        """exclude=True means operating_mode must not appear in model_dump()."""
+    def test_present_in_model_dump(self) -> None:
+        """operating_mode must appear in model_dump() so HTML/file exports see it.
+
+        The field is excluded from the Gemini response_schema via
+        _GEMINI_EXCLUDED_FIELDS — not via exclude=True on the Field — so it
+        remains available in the full serialised report.
+        """
         report = HealthReport(
             executive_summary=ExecutiveSummary(
                 overall_status=OverallStatus.HEALTHY,
@@ -116,7 +121,8 @@ class TestHealthReportOperatingModeField:
             )
         )
         dumped = report.model_dump()
-        assert "operating_mode" not in dumped
+        assert "operating_mode" in dumped
+        assert dumped["operating_mode"] == OperatingMode.LIVE_ONLY
 
 
 # ── ServiceHealthSkill instance state ────────────────────────
@@ -179,10 +185,9 @@ class TestPostProcessReportOperatingMode:
         skill._attachments_present = False
 
         report_json = _make_minimal_report_json(findings=[_make_finding_dict()])
-        # post_process_report returns Markdown; we re-parse via model_validate_json
-        # by using a thin helper that intercepts the HealthReport before to_markdown().
-        # Instead, validate the behaviour indirectly: call _build_report_from_json
-        # which is what post_process_report uses.
+        # post_process_report returns Markdown, so we validate the intermediate
+        # HealthReport behaviour directly: clean/parse the JSON here and apply
+        # the same operating-mode update logic inline.
 
         from vaig.utils.json_cleaner import clean_llm_json  # noqa: PLC0415
 
