@@ -97,7 +97,7 @@ class TestLiveWithoutAttachFlags:
 
         with (
             patch(
-                "vaig.core.headless.execute_skill_headless",
+                "vaig.cli.commands.live.execute_skill_headless",
                 return_value=orch_result,
             ) as mock_headless,
             patch(
@@ -151,7 +151,7 @@ class TestLiveWithAttachLocalPath:
 
         with (
             patch(
-                "vaig.core.headless.execute_skill_headless",
+                "vaig.cli.commands.live.execute_skill_headless",
                 return_value=orch_result,
             ) as mock_headless,
             patch(
@@ -208,7 +208,7 @@ class TestLiveWithMultipleAttach:
 
         with (
             patch(
-                "vaig.core.headless.execute_skill_headless",
+                "vaig.cli.commands.live.execute_skill_headless",
                 return_value=orch_result,
             ) as mock_headless,
             patch(
