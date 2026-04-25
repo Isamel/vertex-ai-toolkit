@@ -3085,6 +3085,29 @@ class Orchestrator:
             current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
+        run_cost_usd: float = sum(
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
+        )
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        result.run_cost_usd = run_cost_usd
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+        _quality = RunQualityCollector()
+        # Capture model_degraded and agent_failed from sync parallel gatherers
+        for _pr in parallel_results:
+            if _pr.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.model_degraded,
+                    where=_pr.agent_name,
+                    consequence="gatherer ran on fallback model",
+                )
+            if not _pr.success:
+                _quality.record_kind(
+                    QualityIssueKind.agent_failed,
+                    where=_pr.agent_name,
+                    consequence="gatherer did not produce a successful result",
+                )
+
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
         if required_sections:
@@ -3095,27 +3118,15 @@ class Orchestrator:
                     len(missing),
                     ", ".join(missing),
                 )
+                _quality.record_kind(
+                    QualityIssueKind.incomplete_gather,
+                    where="merged_context",
+                    consequence=f"missing required sections: {', '.join(missing)}",
+                )
 
         # ── Sequential phase ──────────────────────────────────────────────
         current_context = merged_context
         context_chain: list[str] = [merged_context]
-
-        run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
-        )
-        max_cost_per_run: float = self._settings.budget.max_cost_per_run
-        result.run_cost_usd = run_cost_usd
-        failure_counts: dict[str, int] = {}
-        max_failures: int = self._settings.agents.max_failures_before_fallback
-        _quality = RunQualityCollector()
-        # Capture model_degraded from sync parallel gatherers
-        for _pr in parallel_results:
-            if _pr.model_degraded:
-                _quality.record_kind(
-                    QualityIssueKind.model_degraded,
-                    where=_pr.agent_name,
-                    consequence="gatherer ran on fallback model",
-                )
 
         # ── Post-parallel cost check ──────────────────────────────────────
         if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
@@ -3173,6 +3184,20 @@ class Orchestrator:
             )
             current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
+
+            # ── Quality tracking ──────────────────────────────────────────
+            if agent_result.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.model_degraded,
+                    where=agent.name,
+                    consequence="sequential agent ran on fallback model",
+                )
+            if not agent_result.success:
+                _quality.record_kind(
+                    QualityIssueKind.agent_failed,
+                    where=agent.name,
+                    consequence=agent_result.content[:120] if agent_result.content else "unknown failure",
+                )
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -3475,6 +3500,29 @@ class Orchestrator:
             current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
+        run_cost_usd: float = sum(
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
+        )
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        result.run_cost_usd = run_cost_usd
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+        _quality = RunQualityCollector()
+        # Capture model_degraded and agent_failed from async parallel gatherers
+        for _pr in parallel_results:
+            if _pr.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.model_degraded,
+                    where=_pr.agent_name,
+                    consequence="gatherer ran on fallback model",
+                )
+            if not _pr.success:
+                _quality.record_kind(
+                    QualityIssueKind.agent_failed,
+                    where=_pr.agent_name,
+                    consequence="gatherer did not produce a successful result",
+                )
+
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
         if required_sections:
@@ -3485,27 +3533,15 @@ class Orchestrator:
                     len(missing),
                     ", ".join(missing),
                 )
+                _quality.record_kind(
+                    QualityIssueKind.incomplete_gather,
+                    where="merged_context",
+                    consequence=f"missing required sections: {', '.join(missing)}",
+                )
 
         # ── Sequential phase ──────────────────────────────────────────────
         current_context = merged_context
         context_chain: list[str] = [merged_context]
-
-        run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
-        )
-        max_cost_per_run: float = self._settings.budget.max_cost_per_run
-        result.run_cost_usd = run_cost_usd
-        failure_counts: dict[str, int] = {}
-        max_failures: int = self._settings.agents.max_failures_before_fallback
-        _quality = RunQualityCollector()
-        # Capture model_degraded from async parallel gatherers
-        for _pr in parallel_results:
-            if _pr.model_degraded:
-                _quality.record_kind(
-                    QualityIssueKind.model_degraded,
-                    where=_pr.agent_name,
-                    consequence="gatherer ran on fallback model",
-                )
 
         # ── Post-parallel cost check ──────────────────────────────────────
         if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
@@ -3562,6 +3598,12 @@ class Orchestrator:
                     QualityIssueKind.model_degraded,
                     where=agent_result.agent_name,
                     consequence="sequential agent ran on fallback model",
+                )
+            if not agent_result.success:
+                _quality.record_kind(
+                    QualityIssueKind.agent_failed,
+                    where=agent_result.agent_name,
+                    consequence=agent_result.content[:120] if agent_result.content else "unknown failure",
                 )
             combined_patch = _combine_state_patches(
                 agent_result.state_patch, agent_result.agent_name, agent_result.content

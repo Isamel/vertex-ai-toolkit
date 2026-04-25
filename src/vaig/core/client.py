@@ -528,28 +528,30 @@ class GeminiClient:
             ``False`` when no fallback is available or the client is already
             on the fallback.
         """
-        if self._using_fallback:
-            return True  # already on regional
+        with self._fallback_lock:
+            if self._using_fallback:
+                return True  # already on regional
 
-        fallback = self._settings.gcp.fallback_location
-        if not fallback or fallback == self._active_location:
-            return False
+            fallback = self._settings.gcp.fallback_location
+            if not fallback or fallback == self._active_location:
+                return False
 
-        from_loc = self._active_location
-        logger.warning(
-            "Endpoint flipped: %s → %s (reason: %s)",
-            from_loc,
-            fallback,
-            reason,
-        )
-        flip = EndpointFlip(
-            flipped_at=datetime.datetime.now(datetime.UTC),
-            from_location=from_loc,
-            to_location=fallback,
-            reason=reason,
-        )
-        self._endpoint_flips.append(flip)
-        self._consecutive_429_count = 0
+            from_loc = self._active_location
+            logger.warning(
+                "Endpoint flipped: %s → %s (reason: %s)",
+                from_loc,
+                fallback,
+                reason,
+            )
+            flip = EndpointFlip(
+                flipped_at=datetime.datetime.now(datetime.UTC),
+                from_location=from_loc,
+                to_location=fallback,
+                reason=reason,
+            )
+            self._endpoint_flips.append(flip)
+            self._consecutive_429_count = 0
+
         self._reinitialize_with_fallback()
         return True
 
@@ -647,12 +649,8 @@ class GeminiClient:
         """Switch the active model mid-retry (sync, RATE-04).
 
         Idempotent: a second call is a no-op if ``_fallback_active`` is already
-        ``True`` or ``new_model_id`` equals the current model.
-
-        Checks the :class:`~vaig.core.circuit_breaker.ModelCircuitBreaker` (if
-        wired via the DI container) before swapping — if the target model's
-        breaker is open the switch is suppressed and the primary model continues
-        with its normal retry budget.
+        ``True`` or ``new_model_id`` equals the current model.  Uses
+        ``_model_switch_lock`` to protect the state mutation.
 
         Args:
             new_model_id: Model identifier to switch to.
@@ -687,26 +685,31 @@ class GeminiClient:
                     location=self._active_location,
                 )
             )
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:  # noqa: BLE001
             pass  # Event emission is non-critical
 
     async def _async_switch_model(self, new_model_id: str, *, attempt: int = 0) -> None:
         """Async mirror of :meth:`_switch_model` (RATE-04).
 
-        The async retry loop runs on a single event-loop thread so no lock is
-        needed for the state mutation.  The logic is otherwise identical to the
-        sync variant.
+        Idempotent: a second call is a no-op if ``_fallback_active`` is already
+        ``True`` or ``new_model_id`` equals the current model.  Uses
+        ``_model_switch_lock`` (sync threading lock) to protect the state
+        mutation — safe to acquire from async context since the critical section
+        is very short and never blocks on I/O.
 
         Args:
             new_model_id: Model identifier to switch to.
             attempt: Retry-loop attempt number — forwarded to the emitted event.
         """
-        if self._fallback_active or new_model_id == self._current_model_id:
-            return
+        with self._model_switch_lock:
+            if self._fallback_active or new_model_id == self._current_model_id:
+                return
 
-        old = self._current_model_id
-        self._current_model_id = new_model_id
-        self._fallback_active = True
+            old = self._current_model_id
+            self._current_model_id = new_model_id
+            self._fallback_active = True
 
         logger.warning(
             "Model fallback activated: %s → %s (location=%s, attempt=%d)",
@@ -728,8 +731,10 @@ class GeminiClient:
                     location=self._active_location,
                 )
             )
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:  # noqa: BLE001
-            pass
+            pass  # Event emission is non-critical
 
     def reinitialize(
         self,
@@ -1236,7 +1241,7 @@ class GeminiClient:
                         if self._active_location == "global" and not self._using_fallback:
                             self._consecutive_429_count += 1
                             if self._consecutive_429_count >= 2:
-                                if self._flip_to_fallback_on_429():
+                                if await asyncio.to_thread(self._flip_to_fallback_on_429):
                                     continue  # retry against new regional client
                         # RATE-04: switch to fallback model after half the retry budget.
                         if (
@@ -1441,6 +1446,11 @@ class GeminiClient:
 
         def _call() -> GenerationResult:
             client = self._get_client()
+            # Re-read current model each attempt so fallback activation is
+            # reflected without re-entering the outer scope (RATE-04 FIX).
+            # Per-call model_id override takes priority; fall back to the
+            # instance's current model (which may have switched mid-retry).
+            current_mid = model_id or self._current_model_id
             config = self._build_generation_config(
                 system_instruction=system_instruction,
                 **gen_kwargs,
@@ -1449,14 +1459,14 @@ class GeminiClient:
             if history:
                 chat_history = self._build_history(history)
                 chat = client.chats.create(
-                    model=mid,
+                    model=current_mid,
                     history=chat_history,  # type: ignore[arg-type]
                     config=config,
                 )
                 response = chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = client.models.generate_content(
-                    model=mid,
+                    model=current_mid,
                     contents=prompt,  # type: ignore[arg-type]
                     config=config,
                 )
@@ -1470,7 +1480,7 @@ class GeminiClient:
 
             return GenerationResult(
                 text=text,
-                model=mid,
+                model=current_mid,
                 usage=usage,
                 finish_reason=(str(response.candidates[0].finish_reason) if response.candidates else ""),
                 thinking_text=thinking_text,
@@ -1594,6 +1604,11 @@ class GeminiClient:
 
         def _call() -> ToolCallResult:
             client = self._get_client()
+            # Re-read current model each attempt so fallback activation is
+            # reflected without re-entering the outer scope (RATE-04 FIX).
+            # Per-call model_id override takes priority; fall back to the
+            # instance's current model (which may have switched mid-retry).
+            current_mid = model_id or self._current_model_id
             tools = [types.Tool(function_declarations=tool_declarations)]
             config = self._build_generation_config(
                 system_instruction=system_instruction,
@@ -1616,14 +1631,14 @@ class GeminiClient:
                         actual_prompt = last_entry.parts
 
                     chat = client.chats.create(
-                        model=mid,
+                        model=current_mid,
                         history=chat_history,  # type: ignore[arg-type]
                         config=config,
                     )
                     response = chat.send_message(actual_prompt)
                 else:
                     response = client.models.generate_content(
-                        model=mid,
+                        model=current_mid,
                         contents=prompt,  # type: ignore[arg-type]
                         config=config,
                     )
@@ -1640,7 +1655,7 @@ class GeminiClient:
                     )
                     return ToolCallResult(
                         text=f"Model response was blocked: {exc}",
-                        model=mid,
+                        model=current_mid,
                         function_calls=[],
                         usage={},
                         finish_reason="BLOCKED",
@@ -1657,7 +1672,7 @@ class GeminiClient:
                 logger.debug("generate_with_tools() — empty response (no candidates/parts)")
                 return ToolCallResult(
                     text="",
-                    model=mid,
+                    model=current_mid,
                     function_calls=[],
                     usage=usage,
                     finish_reason=(str(candidate.finish_reason) if candidate else ""),
@@ -1698,7 +1713,7 @@ class GeminiClient:
 
             return ToolCallResult(
                 text="".join(text_parts),
-                model=mid,
+                model=current_mid,
                 function_calls=function_calls,
                 usage=usage,
                 finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]

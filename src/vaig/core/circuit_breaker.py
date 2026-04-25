@@ -27,7 +27,7 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
+import threading
 import time
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -49,7 +49,11 @@ class CircuitBreakerState(StrEnum):
 
 
 class CircuitBreaker:
-    """Async-safe circuit breaker for runtime failure protection.
+    """Thread-safe circuit breaker for runtime failure protection.
+
+    Uses a :class:`threading.Lock` so it is safe to call from both sync and
+    async paths (including multiple event-loop threads and ThreadPoolExecutor
+    workers).
 
     Args:
         config: :class:`~vaig.core.config.CircuitBreakerConfig` with thresholds.
@@ -61,7 +65,7 @@ class CircuitBreaker:
 
     def __init__(self, config: CircuitBreakerConfig) -> None:
         self._config = config
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
         self._state = CircuitBreakerState.CLOSED
         self._failure_count: int = 0
         self._opened_at: float = 0.0
@@ -75,6 +79,11 @@ class CircuitBreaker:
         """Current state of the circuit breaker (read-only snapshot)."""
         return self._state
 
+    @property
+    def is_open(self) -> bool:
+        """``True`` when the breaker is in the OPEN state."""
+        return self._state == CircuitBreakerState.OPEN
+
     async def allow_request(self) -> None:
         """Check whether a request is allowed to proceed.
 
@@ -83,7 +92,7 @@ class CircuitBreaker:
                 breaker is in the OPEN state and the recovery timeout has not
                 elapsed yet.
         """
-        async with self._lock:
+        with self._lock:
             if self._state == CircuitBreakerState.CLOSED:
                 return
             if self._state == CircuitBreakerState.HALF_OPEN:
@@ -103,7 +112,7 @@ class CircuitBreaker:
 
         Resets failure count and transitions HALF_OPEN → CLOSED.
         """
-        async with self._lock:
+        with self._lock:
             self._failure_count = 0
             self._window = self._window[-(self._config.window_size - 1) :] + [True]
             if self._state == CircuitBreakerState.HALF_OPEN:
@@ -115,7 +124,7 @@ class CircuitBreaker:
         Increments failure count and transitions to OPEN when
         ``failure_threshold`` is reached.
         """
-        async with self._lock:
+        with self._lock:
             self._failure_count += 1
             self._window = self._window[-(self._config.window_size - 1) :] + [False]
             if self._failure_count >= self._config.failure_threshold:
@@ -128,7 +137,7 @@ class CircuitBreaker:
         Returns:
             Dict with ``state``, ``failure_count``, ``window``.
         """
-        async with self._lock:
+        with self._lock:
             return {
                 "state": self._state.value,
                 "failure_count": self._failure_count,
@@ -143,6 +152,10 @@ class ModelCircuitBreaker:
     ``"gemini-2.5-pro"`` in ``"us-central1"`` does **not** block
     ``"gemini-2.5-flash"`` in the same location (or any model in a different
     location).
+
+    Uses a :class:`threading.Lock` for the registry so the ``_breakers`` dict
+    is safe to access from concurrent sync and async callers (including
+    ThreadPoolExecutor workers).
 
     Usage::
 
@@ -160,10 +173,13 @@ class ModelCircuitBreaker:
     def __init__(self, config: CircuitBreakerConfig) -> None:
         self._config = config
         self._breakers: dict[tuple[str, str], CircuitBreaker] = {}
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     def _get_or_create(self, location: str, model_id: str) -> CircuitBreaker:
-        """Return the breaker for ``(location, model_id)``, creating if absent."""
+        """Return the breaker for ``(location, model_id)``, creating if absent.
+
+        Must be called with ``self._lock`` held.
+        """
         key = (location, model_id)
         if key not in self._breakers:
             self._breakers[key] = CircuitBreaker(self._config)
@@ -172,41 +188,40 @@ class ModelCircuitBreaker:
     def is_open(self, location: str, model_id: str) -> bool:
         """Return ``True`` if the breaker for ``(location, model_id)`` is OPEN.
 
-        This is a **sync** read-only check — safe to call from non-async code.
+        Thread-safe sync check — safe to call from non-async code.
         Does not transition state (no side effects).
         """
-        key = (location, model_id)
-        if key not in self._breakers:
-            return False
-        breaker = self._breakers[key]
-        if breaker.state != CircuitBreakerState.OPEN:
-            return False
-        # Check if recovery timeout has elapsed (same logic as allow_request).
-        import time as _time
-
-        elapsed = _time.monotonic() - breaker._opened_at
-        return elapsed < self._config.recovery_timeout
+        with self._lock:
+            key = (location, model_id)
+            if key not in self._breakers:
+                return False
+            breaker = self._breakers[key]
+            if not breaker.is_open:
+                return False
+            # Check if recovery timeout has elapsed (same logic as allow_request).
+            elapsed = time.monotonic() - breaker._opened_at
+            return elapsed < self._config.recovery_timeout
 
     async def allow_request(self, location: str, model_id: str) -> None:
         """Proxy to the underlying breaker's :meth:`CircuitBreaker.allow_request`."""
-        async with self._lock:
+        with self._lock:
             breaker = self._get_or_create(location, model_id)
         await breaker.allow_request()
 
     async def record_success(self, location: str, model_id: str) -> None:
         """Record a successful call for ``(location, model_id)``."""
-        async with self._lock:
+        with self._lock:
             breaker = self._get_or_create(location, model_id)
         await breaker.record_success()
 
     async def record_failure(self, location: str, model_id: str) -> None:
         """Record a failed call for ``(location, model_id)``."""
-        async with self._lock:
+        with self._lock:
             breaker = self._get_or_create(location, model_id)
         await breaker.record_failure()
 
     async def snapshot(self, location: str, model_id: str) -> dict[str, object]:
         """Return a snapshot of the breaker for ``(location, model_id)``."""
-        async with self._lock:
+        with self._lock:
             breaker = self._get_or_create(location, model_id)
         return await breaker.snapshot()
