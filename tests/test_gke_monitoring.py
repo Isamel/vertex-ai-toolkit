@@ -1109,8 +1109,12 @@ class TestPodMismatchDiagnostics:
         # No match → empty result (no KeyError, no crash)
         assert result == {}
 
-    def test_pod_mismatch_diagnostic_logged(self, caplog: pytest.LogCaptureFixture) -> None:
-        """When monitoring returns pods that don't match expected, diagnostic is logged at DEBUG."""
+    def test_pod_mismatch_diagnostic_logged(self) -> None:
+        """When monitoring returns pods that don't match expected, diagnostic is logged at DEBUG.
+
+        Uses a direct handler on the vaig logger to avoid pytest caplog propagation
+        issues (vaig_logger.propagate=False in log.py prevents root-level capture).
+        """
         import logging
 
         from vaig.tools.gke.monitoring import get_workload_usage_metrics
@@ -1122,19 +1126,33 @@ class TestPodMismatchDiagnostics:
         cpu_ts = _make_container_ts("monitoring-pod-abc123", "app", [0.3])
         mock_client.list_time_series.side_effect = [[cpu_ts], []]
 
-        # Set level on both the specific logger and the root logger so caplog
-        # captures DEBUG records regardless of the CI log propagation chain.
-        with caplog.at_level(logging.DEBUG):
+        # Attach a handler directly to the vaig logger (propagate=False means
+        # caplog/root won't capture it — we must go to the source).
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        vaig_logger = logging.getLogger("vaig")
+        handler = _Capture(level=logging.DEBUG)
+        old_level = vaig_logger.level
+        vaig_logger.addHandler(handler)
+        vaig_logger.setLevel(logging.DEBUG)
+        try:
             with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
                 get_workload_usage_metrics(
                     namespace="default",
                     workload_pod_names={"api": ["expected-pod-1"]},
                     gke_config=cfg,
                 )
+        finally:
+            vaig_logger.removeHandler(handler)
+            vaig_logger.setLevel(old_level)
 
-        # Should log the mismatch diagnostics
-        log_text = caplog.text
-        assert "pod name mismatch" in log_text.lower() or "missing" in log_text.lower()
+        # Should have logged the mismatch diagnostics at DEBUG
+        messages = " ".join(r.getMessage() for r in records).lower()
+        assert "pod name mismatch" in messages or "missing" in messages
 
     def test_matched_pods_no_mismatch_log(self, caplog: pytest.LogCaptureFixture) -> None:
         """When pods match exactly, no mismatch warning is emitted."""
