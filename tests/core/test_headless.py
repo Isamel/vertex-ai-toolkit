@@ -379,8 +379,8 @@ class TestExecuteSkillHeadlessIntegration:
         fake_adapter = MagicMock()
         custom_cfg = RepoInvestigationConfig(attachment_context_budget_bytes=512)
 
-        with patch(_P_REPO_INDEX) as mock_ri:
-            mock_ri.build_from_attachments.return_value = (real_index, [])
+        _patch_bfa = _P_REPO_INDEX + ".build_from_attachments"
+        with patch(_patch_bfa, return_value=(real_index, [])):
             with caplog.at_level(logging.WARNING, logger="vaig.core.headless"):
                 result = execute_skill_headless(
                     settings=_make_settings(),
@@ -391,9 +391,14 @@ class TestExecuteSkillHeadlessIntegration:
                     repo_config=custom_cfg,
                 )
 
-        assert result.attachment_truncated is True
-        # Warning must reference the custom budget (512)
+        # With map-reduce, per-window render truncation surfaces as an EvidenceGap
+        # (window_internally_truncated) rather than flipping attachment_truncated.
+        # attachment_truncated=True is reserved for the window-cap-hit path.
+        # The warning about the 512-byte budget must still fire.
         assert any("512" in r.message for r in caplog.records)
+        # Single oversized chunk → one window → fast-path render truncation →
+        # attachment_truncated=True (single-window truncation is still exposed to callers).
+        assert result.attachment_truncated is True
 
     @patch(_P_CLIENT)
     @patch(_P_ORCHESTRATOR)
@@ -424,9 +429,7 @@ class TestExecuteSkillHeadlessIntegration:
 
         assert result.attachment_truncated is False
         assert result.attachment_gaps == []
-        truncation_warnings = [
-            r for r in caplog.records if "attachment context truncated" in r.message
-        ]
+        truncation_warnings = [r for r in caplog.records if "attachment context truncated" in r.message]
         assert len(truncation_warnings) == 0
 
     @patch(_P_CLIENT)
@@ -472,8 +475,7 @@ class TestExecuteSkillHeadlessIntegration:
         fake_adapter = MagicMock()
         custom_cfg = RepoInvestigationConfig(attachment_context_budget_bytes=512)
 
-        with patch(_P_REPO_INDEX) as mock_ri:
-            mock_ri.build_from_attachments.return_value = (real_index, [gap])
+        with patch(_P_REPO_INDEX + ".build_from_attachments", return_value=(real_index, [gap])):
             with caplog.at_level(logging.WARNING, logger="vaig.core.headless"):
                 result = execute_skill_headless(
                     settings=_make_settings(),
@@ -489,9 +491,7 @@ class TestExecuteSkillHeadlessIntegration:
         assert any("missing_file" in g for g in result.attachment_gaps)
 
         # Warning must have been logged
-        truncation_warnings = [
-            r for r in caplog.records if "attachment context truncated" in r.message
-        ]
+        truncation_warnings = [r for r in caplog.records if "attachment context truncated" in r.message]
         assert len(truncation_warnings) >= 1
 
         # The prompt passed to orchestrator should contain _TRUNCATION_MARKER

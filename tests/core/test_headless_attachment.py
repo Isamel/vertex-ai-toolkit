@@ -15,6 +15,7 @@ _P_CLIENT = "vaig.core.client.GeminiClient"
 _P_CREDS = "vaig.core.auth.get_gke_credentials"
 _P_REPO_INDEX = "vaig.core.repo_index.RepoIndex"
 _P_RENDER = "vaig.core.headless._render_attachment_context"
+_P_SLICE = "vaig.core.headless._slice_attachment_windows"
 
 # ── Minimal fakes ─────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ class _FakeResult:
     agent_results: list[Any] = field(default_factory=list)
     attachment_truncated: bool = False
     attachment_gaps: list[Any] = field(default_factory=list)
+    map_reduce_windows_used: int = 1
 
 
 class _FakeSkill:
@@ -192,20 +194,23 @@ class TestHeadlessPassesContextWhenAdaptersPresent:
 
         fake_adapter = MagicMock()
         fake_index = MagicMock()
-        fake_index.chunks = []  # no chunks needed for render test
+        fake_window = MagicMock()
+        fake_window.chunks = [MagicMock()]
+        fake_index.chunks = [MagicMock()]  # non-empty so slicing runs
 
         expected_context = "### fixture.md\n```\nATT10_FIXTURE_TOKEN_XYZ\n```\n"
 
         with patch(_P_REPO_INDEX) as mock_ri:
             mock_ri.build_from_attachments.return_value = (fake_index, [])
-            with patch(_P_RENDER, return_value=(expected_context, False)):
-                execute_skill_headless(
-                    settings=_make_settings(),
-                    skill=_FakeSkill(),
-                    query="test",
-                    gke_config=_make_gke_config(),
-                    attachment_adapters=[fake_adapter],
-                )
+            with patch(_P_SLICE, return_value=[fake_window]):
+                with patch(_P_RENDER, return_value=(expected_context, False)):
+                    execute_skill_headless(
+                        settings=_make_settings(),
+                        skill=_FakeSkill(),
+                        query="test",
+                        gke_config=_make_gke_config(),
+                        attachment_adapters=[fake_adapter],
+                    )
 
         mock_ri.build_from_attachments.assert_called_once()
         call_kwargs = mock_orch.execute_with_tools.call_args.kwargs
@@ -338,3 +343,71 @@ class TestHeadlessRepoIndexErrorIsGraceful:
                     gke_config=_make_gke_config(),
                     attachment_adapters=[fake_adapter],
                 )
+
+
+# ── G1: fast-path sets map_reduce_windows_used ───────────────────────────────
+
+
+class TestFastPathMapReduceWindowsUsed:
+    """G1: fast path (0 or 1 window) correctly populates map_reduce_windows_used."""
+
+    @patch(_P_CLIENT)
+    @patch(_P_ORCHESTRATOR)
+    @patch(_P_REGISTER)
+    @patch(_P_CREDS, return_value=None)
+    def test_no_adapters_windows_used_is_0(
+        self,
+        _mock_creds,
+        mock_register,
+        mock_orch_cls,
+        mock_client_cls,
+    ):
+        from vaig.core.headless import execute_skill_headless
+
+        _patched_base(mock_register, mock_orch_cls, mock_client_cls)
+
+        result = execute_skill_headless(
+            settings=_make_settings(),
+            skill=_FakeSkill(),
+            query="test",
+            gke_config=_make_gke_config(),
+        )
+
+        assert result.map_reduce_windows_used == 0
+
+    @patch(_P_CLIENT)
+    @patch(_P_ORCHESTRATOR)
+    @patch(_P_REGISTER)
+    @patch(_P_CREDS, return_value=None)
+    def test_single_window_windows_used_is_1(
+        self,
+        _mock_creds,
+        mock_register,
+        mock_orch_cls,
+        mock_client_cls,
+    ):
+        """When exactly one window is produced, fast path runs and windows_used=1."""
+        from unittest.mock import patch as _patch
+
+        from vaig.core.headless import execute_skill_headless
+
+        _patched_base(mock_register, mock_orch_cls, mock_client_cls)
+        fake_adapter = MagicMock()
+        fake_index = MagicMock()
+        fake_index.chunks = [MagicMock()]
+        fake_window = MagicMock()
+        fake_window.chunks = [MagicMock()]
+
+        with patch(_P_REPO_INDEX) as mock_ri:
+            mock_ri.build_from_attachments.return_value = (fake_index, [])
+            with _patch("vaig.core.headless._slice_attachment_windows", return_value=[fake_window]):
+                with _patch(_P_RENDER, return_value=("ctx", False)):
+                    result = execute_skill_headless(
+                        settings=_make_settings(),
+                        skill=_FakeSkill(),
+                        query="test",
+                        gke_config=_make_gke_config(),
+                        attachment_adapters=[fake_adapter],
+                    )
+
+        assert result.map_reduce_windows_used == 1

@@ -213,6 +213,17 @@ class OrchestratorResult:
     Stored as strings (not ``EvidenceGap`` objects) to keep this layer decoupled
     from the repo pipeline schema.
     """
+    map_reduce_windows_used: int = 1
+    """Number of attachment-context windows the headless executor processed.
+
+    - 0 when no attachments were provided
+    - 1 when attachments fit a single window (B1 fast path; default for B1-only callers)
+    - N>1 when Map-Reduce ran across N windows (sequential)
+
+    Counts attempted windows including those that failed and were recorded as
+    EvidenceGaps. Set only by ``execute_skill_headless``; other entry points
+    leave the default (1).
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
