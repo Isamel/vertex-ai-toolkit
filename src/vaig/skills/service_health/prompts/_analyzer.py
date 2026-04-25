@@ -484,18 +484,30 @@ You are running in **autonomous mode**. In addition to the standard analysis abo
 """
 
 
+def _sanitize_prior_text(text: str) -> str:
+    """Strip characters that could break prompt structure from attachment-derived text."""
+    import re as _re
+
+    # Remove XML/HTML tags that could inject instructions
+    text = _re.sub(r"<[^>]{0,200}>", "", text)
+    # Truncate very long values to prevent prompt flooding
+    return text[:500]
+
+
 def build_attachment_seeded_section(priors_json: str) -> str:
     """Return a formatted investigation-seed block for injection into the Analyzer user prompt.
 
-    Parses ``priors_json`` (an ``AttachmentPriors`` JSON blob) and formats each
-    non-empty sub-collection into a Markdown section.  Returns an empty string
-    when priors_json is blank or produces no usable priors.
+    Parses ``priors_json`` (an ``AttachmentPriors`` JSON blob) and formats
+    all four sections (hotspots, incidents, change signals, narrative hints)
+    as Markdown investigation directions. Sections with no items use a
+    ``- (none)`` placeholder. Returns an empty string when ``priors_json``
+    is blank, cannot be parsed as JSON, or parses to a non-dict value.
 
     Args:
         priors_json: JSON string of an ``AttachmentPriors`` object.
 
     Returns:
-        A Markdown string ready to append to the Analyzer user message.
+        Formatted Markdown string, or ``""`` if priors are empty/unparseable.
     """
     import json as _json  # noqa: PLC0415 — local import keeps module top clean
 
@@ -507,12 +519,20 @@ def build_attachment_seeded_section(priors_json: str) -> str:
     except (_json.JSONDecodeError, TypeError):
         return ""
 
-    hotspots = data.get("runbook_hotspots") or data.get("hotspots") or []
+    if not isinstance(data, dict):
+        return ""
+
+    hotspots = data.get("runbook_hotspots") or []
     incidents = data.get("historical_incidents") or []
     change_signals = data.get("change_signals") or []
     narrative_hints = data.get("narrative_hints") or []
 
     if not any([hotspots, incidents, change_signals, narrative_hints]):
+        return ""
+
+    # Only emit the seeded block when hotspots or incidents are present;
+    # change_signals and narrative_hints alone don't warrant a dedicated section.
+    if not hotspots and not incidents:
         return ""
 
     lines: list[str] = [
@@ -528,9 +548,9 @@ def build_attachment_seeded_section(priors_json: str) -> str:
     lines += ["### Runbook Hotspots"]
     if hotspots:
         for h in hotspots:
-            entity = h.get("entity", "")
-            concern = h.get("concern", "")
-            source_ref = h.get("source_ref", "")
+            entity = _sanitize_prior_text(h.get("entity", ""))
+            concern = _sanitize_prior_text(h.get("concern", ""))
+            source_ref = _sanitize_prior_text(h.get("source_ref", ""))
             lines.append(f"- **{entity}**: {concern} (ref: {source_ref})")
     else:
         lines.append("- (none)")
@@ -538,9 +558,9 @@ def build_attachment_seeded_section(priors_json: str) -> str:
     lines += ["", "### Historical Incidents"]
     if incidents:
         for i in incidents:
-            symptom = i.get("symptom_pattern", "")
-            root_cause = i.get("root_cause", "")
-            fix = i.get("fix_applied", "")
+            symptom = _sanitize_prior_text(i.get("symptom_pattern", ""))
+            root_cause = _sanitize_prior_text(i.get("root_cause", ""))
+            fix = _sanitize_prior_text(i.get("fix_applied", ""))
             lines.append(f"- Symptom: {symptom} | Root cause: {root_cause} | Fix: {fix}")
     else:
         lines.append("- (none)")
@@ -548,9 +568,9 @@ def build_attachment_seeded_section(priors_json: str) -> str:
     lines += ["", "### Change Signals"]
     if change_signals:
         for s in change_signals:
-            path = s.get("field_path", "")
-            old_v = s.get("old_value", "")
-            new_v = s.get("new_value", "")
+            path = _sanitize_prior_text(s.get("field_path", ""))
+            old_v = _sanitize_prior_text(s.get("old_value", ""))
+            new_v = _sanitize_prior_text(s.get("new_value", ""))
             lines.append(f"- {path}: {old_v!r} → {new_v!r}")
     else:
         lines.append("- (none)")
@@ -558,8 +578,8 @@ def build_attachment_seeded_section(priors_json: str) -> str:
     lines += ["", "### Narrative Hints"]
     if narrative_hints:
         for nh in narrative_hints:
-            hint = nh.get("hint", "")
-            ref = nh.get("source_ref", "")
+            hint = _sanitize_prior_text(nh.get("hint", ""))
+            ref = _sanitize_prior_text(nh.get("source_ref", ""))
             lines.append(f"- {hint} (ref: {ref})")
     else:
         lines.append("- (none)")

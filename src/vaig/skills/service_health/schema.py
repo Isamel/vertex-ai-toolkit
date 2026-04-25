@@ -655,8 +655,8 @@ class Finding(BaseModel):
         default="live_only",
         description=(
             "Cross-source classification of this finding (SPEC-ATT-10 §6.5.2). "
-            "Set by the Analyzer when attachments are present. "
-            "Excluded from the Gemini response_schema — populated post-Gemini by skill.py."
+            "Excluded from the Gemini response_schema via ``_GEMINI_EXCLUDED_FINDING_FIELDS`` "
+            "and populated post-hoc by skill.py after the Gemini call returns."
         ),
         exclude=True,
     )
@@ -2266,22 +2266,19 @@ class HealthReportGeminiSchema(HealthReport):
         if isinstance(req, list):
             schema["required"] = [r for r in req if r not in excluded_names]
 
-        # ATT-10 §6.5.2: Strip post-hoc fields from the Finding $def
-        defs = schema.get("$defs")
-        if isinstance(defs, dict):
-            finding_def = defs.get("Finding")
-            if isinstance(finding_def, dict):
-                finding_props = finding_def.get("properties")
-                if isinstance(finding_props, dict):
-                    for name in cls._GEMINI_EXCLUDED_FINDING_FIELDS:
-                        finding_props.pop(name, None)
-                finding_req = finding_def.get("required")
-                if isinstance(finding_req, list):
-                    finding_def["required"] = [r for r in finding_req if r not in cls._GEMINI_EXCLUDED_FINDING_FIELDS]
+        # ATT-10 §6.5.2: Strip post-hoc fields from the Finding $def and remove orphaned $defs
+        defs = schema.get("$defs") or {}
+        finding_def = defs.get("Finding")
+        if isinstance(finding_def, dict):
+            finding_props = finding_def.get("properties")
+            if isinstance(finding_props, dict):
+                for name in cls._GEMINI_EXCLUDED_FINDING_FIELDS:
+                    finding_props.pop(name, None)
+            finding_req = finding_def.get("required")
+            if isinstance(finding_req, list):
+                finding_def["required"] = [r for r in finding_req if r not in cls._GEMINI_EXCLUDED_FINDING_FIELDS]
 
-        # Remove orphaned $defs (types only referenced by excluded fields)
-        defs = schema.get("$defs")
-        if isinstance(defs, dict):
+        if defs:
             reachable = _collect_reachable_defs(schema, set(excluded_names))
             orphans = [key for key in list(defs) if key not in reachable]
             for key in orphans:

@@ -10,8 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-
 from vaig.skills.service_health.prompts import build_attachment_seeded_section
 from vaig.skills.service_health.schema import (
     AttachmentPriors,
@@ -164,7 +162,7 @@ class TestBuildAttachmentSeededSection:
         priors = AttachmentPriors()
         result = build_attachment_seeded_section(priors.model_dump_json())
         # empty priors → no hotspots/incidents/etc → returns empty string
-        assert isinstance(result, str)
+        assert result == ""
 
     def test_returns_empty_for_blank_input(self) -> None:
         result = build_attachment_seeded_section("")
@@ -201,14 +199,6 @@ class TestBuildAttachmentSeededSection:
         result = build_attachment_seeded_section(priors.model_dump_json())
         assert "Attachment-Seeded Investigation Directions" in result
 
-    def test_accepts_raw_json_dict(self) -> None:
-        raw = json.dumps(
-            {
-                "hotspots": [{"entity": "api-gateway", "concern": "timeout", "source_ref": ""}],
-                "historical_incidents": [],
-                "change_signals": [],
-                "narrative_hints": [],
-            }
-        )
-        result = build_attachment_seeded_section(raw)
-        assert "api-gateway" in result
+    def test_returns_empty_for_non_dict_json(self) -> None:
+        result = build_attachment_seeded_section('"just a string"')
+        assert result == ""
