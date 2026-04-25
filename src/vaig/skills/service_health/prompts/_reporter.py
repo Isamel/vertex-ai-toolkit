@@ -729,6 +729,12 @@ Rules:
   e.g. ``"This pattern has been observed 3 times since <first_seen date>."``.
 - NEVER fabricate recurrence data — only use what is present in the annotation.
 - If ``recurrence`` is None or absent, do NOT mention recurrence at all.
+
+### ATT-10 §6.5.3 — Ratification JSON passthrough (MANDATORY when present)
+If the verifier output contains a ``RATIFICATION_JSON`` … ``END_RATIFICATION_JSON`` block,
+copy the JSON array verbatim into the ``ratification_json`` field of the top-level report object.
+Do NOT interpret or modify the JSON — copy it as a raw string.
+If no such block is present, set ``ratification_json`` to ``""``.
 {datadog_api_section}"""
     return _prefix_attachment_context(result, attachment_context)
 
