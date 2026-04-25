@@ -9,6 +9,7 @@ so that existing callers work without changes.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import random
 import ssl
@@ -279,6 +280,24 @@ class ToolCallResult:
     """
 
 
+@dataclass(frozen=True)
+class EndpointFlip:
+    """Record of a runtime global → regional endpoint switch (SPEC-GEP-03).
+
+    Created whenever ``GeminiClient`` detects persistent 429 errors on the
+    global endpoint and re-initializes against the regional fallback.
+    """
+
+    flipped_at: datetime.datetime
+    """UTC timestamp of the flip."""
+    from_location: str
+    """Endpoint location before the flip (typically ``"global"``)."""
+    to_location: str
+    """Endpoint location after the flip (e.g. ``"us-central1"``)."""
+    reason: str
+    """Human-readable reason (e.g. ``"persistent_429"``)."""
+
+
 class GeminiClient:
     """Vertex AI Gemini client with multi-model support and streaming.
 
@@ -298,6 +317,10 @@ class GeminiClient:
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
         self._fallback_lock = threading.Lock()
+        # SPEC-GEP-03: track consecutive 429s on the global endpoint to trigger
+        # a regional fallback after sustained quota pressure.
+        self._consecutive_429_count: int = 0
+        self._endpoint_flips: list[EndpointFlip] = []
 
         # Rate-limit quota enforcement — None when disabled.
         self._quota_checker = quota_checker
@@ -486,6 +509,98 @@ class GeminiClient:
             self._active_location,
         )
 
+    def _flip_to_fallback_on_429(self, *, reason: str = "persistent_429") -> bool:
+        """Switch from global to regional when persistent 429s are detected (SPEC-GEP-03).
+
+        Records an :class:`EndpointFlip`, resets ``_consecutive_429_count``,
+        and delegates to :meth:`_reinitialize_with_fallback` for the actual
+        client swap.  The flip record and log are written *inside*
+        ``_fallback_lock`` to avoid a race where two threads both observe the
+        pre-flip state and append duplicate records.
+
+        Returns:
+            ``True`` if a flip occurred, or the client was already on the
+            fallback (no action needed).  ``False`` when no fallback is
+            configured or the fallback location equals the active location.
+        """
+        if self._using_fallback:
+            return True  # already on regional
+
+        fallback = self._settings.gcp.fallback_location
+        if not fallback or fallback == self._active_location:
+            return False
+
+        with self._fallback_lock:
+            # Re-check after acquiring lock — another thread may have flipped already.
+            if self._using_fallback:
+                return True
+
+            from_loc = self._active_location
+            flip = EndpointFlip(
+                flipped_at=datetime.datetime.now(datetime.UTC),
+                from_location=from_loc,
+                to_location=fallback,
+                reason=reason,
+            )
+            self._endpoint_flips.append(flip)
+            self._consecutive_429_count = 0
+            logger.warning(
+                "Endpoint flipped: %s → %s (reason: %s)",
+                from_loc,
+                fallback,
+                reason,
+            )
+            # _reinitialize_with_fallback also acquires _fallback_lock but its
+            # double-checked guard will short-circuit immediately since we just
+            # set _using_fallback = True below before releasing.
+            self._active_location = fallback
+            self._using_fallback = True
+            self._initialized = False
+            self._client = None
+            self.initialize()
+
+        return True
+
+    async def _async_flip_to_fallback_on_429(self, *, reason: str = "persistent_429") -> bool:
+        """Async variant of :meth:`_flip_to_fallback_on_429` (SPEC-GEP-03).
+
+        Calls :meth:`_async_reinitialize_with_fallback` so the event loop is
+        never blocked by a sync SDK initialization.
+
+        Returns:
+            ``True`` if a flip occurred, or the client was already on the
+            fallback (no action needed).  ``False`` when no fallback is
+            configured or the fallback location equals the active location.
+        """
+        if self._using_fallback:
+            return True  # already on regional
+
+        fallback = self._settings.gcp.fallback_location
+        if not fallback or fallback == self._active_location:
+            return False
+
+        # Single-threaded async event loop — no lock needed, but guard anyway.
+        if self._using_fallback:
+            return True
+
+        from_loc = self._active_location
+        flip = EndpointFlip(
+            flipped_at=datetime.datetime.now(datetime.UTC),
+            from_location=from_loc,
+            to_location=fallback,
+            reason=reason,
+        )
+        self._endpoint_flips.append(flip)
+        self._consecutive_429_count = 0
+        logger.warning(
+            "Endpoint flipped: %s → %s (reason: %s)",
+            from_loc,
+            fallback,
+            reason,
+        )
+        await self._async_reinitialize_with_fallback()
+        return True
+
     def _reinitialize_with_fallback(self) -> None:
         """Re-initialize with the fallback location (sync).
 
@@ -553,6 +668,16 @@ class GeminiClient:
     def current_model(self) -> str:
         """Get the current model ID."""
         return self._current_model_id
+
+    @property
+    def endpoint_flips(self) -> list[EndpointFlip]:
+        """Return a copy of all runtime endpoint flips recorded (SPEC-GEP-03).
+
+        Each :class:`EndpointFlip` captures a global → regional switch driven
+        by persistent 429 errors.  Non-empty only when the client started on
+        the global endpoint and had to fall back during the run.
+        """
+        return list(self._endpoint_flips)
 
     def switch_model(self, model_id: str) -> str:
         """Switch the active model. Returns the new model ID."""
@@ -785,7 +910,9 @@ class GeminiClient:
                     break  # fall through to raise
 
             try:
-                return fn()
+                result = fn()
+                self._consecutive_429_count = 0  # SPEC-GEP-03: reset on success
+                return result
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -801,8 +928,16 @@ class GeminiClient:
                     except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
+                is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
+                # SPEC-GEP-03: ResourceExhausted is the google-api-core form of 429;
+                # track consecutive 429s on the global endpoint and flip if needed.
+                if is_rate_limit and self._active_location == "global" and not self._using_fallback:
+                    self._consecutive_429_count += 1
+                    if self._consecutive_429_count >= 2 and self._flip_to_fallback_on_429():
+                        continue
+                else:
+                    self._consecutive_429_count = 0  # reset on any non-429 retryable
                 if attempt < retry_cfg.max_retries:
-                    is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
                     sleep_time, delay = self._compute_backoff_delay(
                         delay,
                         retry_cfg,
@@ -851,29 +986,38 @@ class GeminiClient:
                         break  # fall through to exhaustion handler
                     # 429 rate-limit: retry at app level with longer backoff
                     if exc.code == 429:
-                        if attempt < retry_cfg.max_retries:
-                            sleep_time, delay = self._compute_backoff_delay(
-                                delay,
-                                retry_cfg,
-                                is_rate_limit=True,
-                            )
-                            # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
-                            if not self._check_rate_limit_budget(
-                                sleep_time,
-                                rate_limit_elapsed,
-                                rate_limit_budget,
-                            ):
-                                budget_exceeded = True
-                                break
-                            logger.warning(
-                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
-                                attempt + 1,
-                                retry_cfg.max_retries + 1,
-                                sleep_time,
-                            )
-                            time.sleep(sleep_time)
-                            rate_limit_elapsed += sleep_time
-                            continue
+                        # SPEC-GEP-03: track consecutive 429s on the global endpoint;
+                        # flip to regional after 2 consecutive 429s.
+                        if self._active_location == "global" and not self._using_fallback:
+                            self._consecutive_429_count += 1
+                            if self._consecutive_429_count >= 2:
+                                if self._flip_to_fallback_on_429():
+                                    continue  # retry against new regional client
+                    else:
+                        self._consecutive_429_count = 0  # reset on non-429 retryable
+                    if exc.code == 429 and attempt < retry_cfg.max_retries:
+                        sleep_time, delay = self._compute_backoff_delay(
+                            delay,
+                            retry_cfg,
+                            is_rate_limit=True,
+                        )
+                        # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                        if not self._check_rate_limit_budget(
+                            sleep_time,
+                            rate_limit_elapsed,
+                            rate_limit_budget,
+                        ):
+                            budget_exceeded = True
+                            break
+                        logger.warning(
+                            "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                            attempt + 1,
+                            retry_cfg.max_retries + 1,
+                            sleep_time,
+                        )
+                        time.sleep(sleep_time)
+                        rate_limit_elapsed += sleep_time
+                        continue
                     break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):
@@ -977,7 +1121,9 @@ class GeminiClient:
                     break
 
             try:
-                return await fn()
+                result = await fn()
+                self._consecutive_429_count = 0  # SPEC-GEP-03: reset on success
+                return result
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -993,8 +1139,16 @@ class GeminiClient:
                     except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
+                is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
+                # SPEC-GEP-03: ResourceExhausted is the google-api-core form of 429;
+                # track consecutive 429s on the global endpoint and flip if needed.
+                if is_rate_limit and self._active_location == "global" and not self._using_fallback:
+                    self._consecutive_429_count += 1
+                    if self._consecutive_429_count >= 2 and await self._async_flip_to_fallback_on_429():
+                        continue
+                else:
+                    self._consecutive_429_count = 0  # reset on any non-429 retryable
                 if attempt < retry_cfg.max_retries:
-                    is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
                     sleep_time, delay = self._compute_backoff_delay(
                         delay,
                         retry_cfg,
@@ -1043,29 +1197,38 @@ class GeminiClient:
                         break  # fall through to exhaustion handler
                     # 429 rate-limit: retry at app level with longer backoff
                     if exc.code == 429:
-                        if attempt < retry_cfg.max_retries:
-                            sleep_time, delay = self._compute_backoff_delay(
-                                delay,
-                                retry_cfg,
-                                is_rate_limit=True,
-                            )
-                            # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
-                            if not self._check_rate_limit_budget(
-                                sleep_time,
-                                rate_limit_elapsed,
-                                rate_limit_budget,
-                            ):
-                                budget_exceeded = True
-                                break
-                            logger.warning(
-                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
-                                attempt + 1,
-                                retry_cfg.max_retries + 1,
-                                sleep_time,
-                            )
-                            await asyncio.sleep(sleep_time)
-                            rate_limit_elapsed += sleep_time
-                            continue
+                        # SPEC-GEP-03: track consecutive 429s on the global endpoint;
+                        # flip to regional after 2 consecutive 429s.
+                        if self._active_location == "global" and not self._using_fallback:
+                            self._consecutive_429_count += 1
+                            if self._consecutive_429_count >= 2:
+                                if await self._async_flip_to_fallback_on_429():
+                                    continue  # retry against new regional client
+                    else:
+                        self._consecutive_429_count = 0  # reset on non-429 retryable
+                    if exc.code == 429 and attempt < retry_cfg.max_retries:
+                        sleep_time, delay = self._compute_backoff_delay(
+                            delay,
+                            retry_cfg,
+                            is_rate_limit=True,
+                        )
+                        # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                        if not self._check_rate_limit_budget(
+                            sleep_time,
+                            rate_limit_elapsed,
+                            rate_limit_budget,
+                        ):
+                            budget_exceeded = True
+                            break
+                        logger.warning(
+                            "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                            attempt + 1,
+                            retry_cfg.max_retries + 1,
+                            sleep_time,
+                        )
+                        await asyncio.sleep(sleep_time)
+                        rate_limit_elapsed += sleep_time
+                        continue
                     break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):

@@ -21,7 +21,7 @@ from vaig.core.models import AccessResult, Annotation, SessionCollaborator, Sess
 
 if TYPE_CHECKING:
     from vaig.core.cache import CacheStats
-    from vaig.core.client import ChatMessage, GenerationResult, StreamResult, ToolCallResult
+    from vaig.core.client import ChatMessage, EndpointFlip, GenerationResult, StreamResult, ToolCallResult
 
 __all__ = [
     "GCPClientProvider",
@@ -50,6 +50,11 @@ class GeminiClientProtocol(Protocol):
     @property
     def current_model(self) -> str:
         """Get the current model ID."""
+        ...
+
+    @property
+    def endpoint_flips(self) -> list[EndpointFlip]:
+        """Return a copy of all runtime endpoint flips recorded (SPEC-GEP-03)."""
         ...
 
     def initialize(self) -> None:
@@ -291,21 +296,15 @@ class SessionStoreProtocol(Protocol):
         """Add a message to a session."""
         ...
 
-    async def async_get_messages(
-        self, session_id: str, *, limit: int | None = None
-    ) -> list[dict[str, Any]]:
+    async def async_get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Get all messages for a session, ordered by creation time."""
         ...
 
-    async def async_list_sessions(
-        self, *, limit: int = 20, user: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def async_list_sessions(self, *, limit: int = 20, user: str | None = None) -> list[dict[str, Any]]:
         """List recent sessions."""
         ...
 
-    async def async_get_session(
-        self, session_id: str
-    ) -> dict[str, Any] | None:
+    async def async_get_session(self, session_id: str) -> dict[str, Any] | None:
         """Get session details by ID."""
         ...
 
