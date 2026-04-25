@@ -3,7 +3,16 @@
 Contains HEALTH_VERIFIER_PROMPT: the system instruction for the
 ``health_verifier`` agent that makes targeted tool calls to confirm or
 disprove analyzer findings.
+
+Also provides :func:`build_verifier_ratification_section` — appended to the
+verifier system-instruction when ``AttachmentPriors`` are present, instructing
+the agent to emit a structured ``RATIFICATION_JSON`` block that
+``post_process_report`` can parse and apply to findings (SPEC-ATT-10 §6.5.3).
 """
+
+from __future__ import annotations
+
+import re as _re
 
 from vaig.core.prompt_defense import DELIMITER_DATA_END, DELIMITER_DATA_START
 
@@ -176,3 +185,100 @@ When a Verification Gap specifies an exec_command tool call, you can validate hy
 If exec_command returns "exec is disabled", mark the finding as UNVERIFIABLE with note: "Active validation requires gke.exec_enabled=true"
 If the command tool is not found in the container (e.g., distroless image), mark as UNVERIFIABLE with note: "Container lacks diagnostic tools — manual verification needed"
 """
+
+
+# ── ATT-10 §6.5.3 — Verifier ratification section ───────────────────────────
+
+_RATIFICATION_SECTION = """
+## ATT-10 §6.5.3 — Attachment-Backed Ratification (MANDATORY when attachments are present)
+
+After completing all verification steps above, emit a **RATIFICATION_JSON** block at the
+very end of your output. This block is machine-parsed by the pipeline — format it EXACTLY
+as shown below. Do NOT omit it when attachment priors were provided.
+
+The block lists one entry per finding whose ``source_support`` value you can confirm or
+upgrade/downgrade based on what your targeted tool calls revealed.
+
+### Allowed ``source_support`` values
+- ``live_only`` — no attachment evidence; live data only
+- ``attachment_only`` — no live data available (offline mode)
+- ``live_and_attachment_corroborated`` — live tool call confirmed the attachment claim
+- ``live_matches_expected_state`` — live state matches the attachment's expected state
+- ``live_with_attachment_enrichment`` — attachment enriches remediation; live claim confirmed
+- ``live_vs_attachment_contradicts`` — live tool call contradicts the attachment claim
+- ``live_matches_known_incident_pattern`` — live symptoms match a known incident pattern from attachment
+
+### Allowed ``confidence_override`` values (optional)
+Only set when your tool call explicitly changed confidence: ``CONFIRMED``, ``HIGH``, ``MEDIUM``,
+``LOW``, ``UNVERIFIABLE``. Omit the field (or set to ``null``) to leave confidence unchanged.
+
+### Required JSON format
+
+```
+RATIFICATION_JSON
+[
+  {
+    "finding_title": "<exact title of the finding, as shown in your output>",
+    "ratified_source_support": "<one of the allowed values above>",
+    "confidence_override": "<CONFIRMED|HIGH|MEDIUM|LOW|UNVERIFIABLE or null>",
+    "ratification_note": "<one sentence: what tool call result drove this classification>"
+  }
+]
+END_RATIFICATION_JSON
+```
+
+### Rules
+1. Only include findings where you made a targeted tool call in this verification pass.
+2. For ``live_and_attachment_corroborated`` / ``live_matches_expected_state``: your tool call
+   must have returned data that confirms the attachment claim.
+3. For ``live_vs_attachment_contradicts``: your tool call must have returned data that
+   CONTRADICTS the attachment claim.
+4. For ``attachment_only`` findings (offline mode): skip — nothing to ratify.
+5. If no findings are ratifiable (no attachment priors or all gaps were None), emit:
+   ``RATIFICATION_JSON\n[]\nEND_RATIFICATION_JSON``
+6. NEVER fabricate ratification data. Only emit entries backed by actual tool results.
+"""
+
+
+def build_verifier_ratification_section(attachment_priors_json: str | None) -> str:
+    """Return the ratification instruction block for the verifier system prompt.
+
+    Returns the full ``_RATIFICATION_SECTION`` string when *attachment_priors_json*
+    is a non-empty string (i.e. ``AttachmentPriors`` were built for this run).
+    Returns an empty string otherwise so the verifier prompt is unchanged for
+    runs without attachments (regression-safe).
+
+    Args:
+        attachment_priors_json: JSON blob of an ``AttachmentPriors`` object, or
+            ``None`` / empty string when no attachments were provided.
+
+    Returns:
+        The ratification instruction block, or ``""`` when not applicable.
+    """
+    if not attachment_priors_json:
+        return ""
+    return _RATIFICATION_SECTION
+
+
+def extract_ratification_json(verifier_text: str) -> str:
+    """Extract the ``RATIFICATION_JSON`` payload from verifier Markdown output.
+
+    Looks for a block delimited by ``RATIFICATION_JSON\\n`` … ``\\nEND_RATIFICATION_JSON``
+    and returns the raw JSON array string within it.  Returns ``""`` when the
+    block is absent or malformed.
+
+    Args:
+        verifier_text: The full Markdown output produced by the verifier agent.
+
+    Returns:
+        Raw JSON array string (may be ``"[]"`` for an empty ratification), or
+        ``""`` when the block is not found.
+    """
+    match = _re.search(
+        r"RATIFICATION_JSON\s*\n(.*?)\nEND_RATIFICATION_JSON",
+        verifier_text,
+        _re.DOTALL,
+    )
+    if not match:
+        return ""
+    return match.group(1).strip()

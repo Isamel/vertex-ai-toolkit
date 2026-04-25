@@ -494,8 +494,9 @@ class TestAudit07RunDeterminismMetadata:
     def test_gemini_schema_size_unchanged_by_audit07(self) -> None:
         """AUDIT-07 fields do not increase the Gemini schema size (post-hoc)."""
         schema_str = json.dumps(HealthReportGeminiSchema.model_json_schema())
-        # Schema must remain under 20 KB — new post-hoc fields must NOT appear
-        assert len(schema_str) < 20_000, (
+        # Schema must remain under 21 KB — ATT-10 §6.5.3 added ratification_json (reporter-facing)
+        # which increased the budget from 20 000 → 21 000. New post-hoc fields must NOT appear.
+        assert len(schema_str) < 21_000, (
             f"Gemini schema grew unexpectedly: {len(schema_str)} chars "
             "(AUDIT-07 fields must be post-hoc only)"
         )
@@ -559,7 +560,7 @@ def _count_gemini_states(schema: dict) -> int:
 _STATE_BUDGET_MAX = 25_000
 _STATE_BUDGET_WARN = int(_STATE_BUDGET_MAX * 0.80)  # 20 000
 
-_CHAR_BUDGET_MAX = 20_000
+_CHAR_BUDGET_MAX = 21_000  # ATT-10 §6.5.3 raised from 20 000 → 21 000 (ratification_json field)
 _DEFS_BUDGET_MAX = 25
 
 

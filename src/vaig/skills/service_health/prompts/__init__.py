@@ -51,7 +51,7 @@ from ._system import (
     SYSTEM_INSTRUCTION,
     SYSTEM_INSTRUCTION_GATHERER,
 )
-from ._verifier import HEALTH_VERIFIER_PROMPT
+from ._verifier import HEALTH_VERIFIER_PROMPT, build_verifier_ratification_section, extract_ratification_json
 
 __all__ = [
     # system
@@ -71,6 +71,8 @@ __all__ = [
     "_RECENT_CHANGES_PROMPT",
     # verifier
     "HEALTH_VERIFIER_PROMPT",
+    "build_verifier_ratification_section",
+    "extract_ratification_json",
     # planner
     "HEALTH_PLANNER_PROMPT",
     # investigator
