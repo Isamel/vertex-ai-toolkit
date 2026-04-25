@@ -349,6 +349,48 @@ class AttachmentCitation(BaseModel):
     excerpt: str = Field(default="", description="Verbatim excerpt ≤ 240 chars")
 
 
+# ── ATT-10 §6.5.2: Source-support ref models ─────────────────────────────
+
+
+class EvidenceRef(BaseModel):
+    """A reference to a piece of evidence supporting a finding."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    source: str = Field(default="", description="e.g. 'attachment', 'live', 'kubectl get deploy'")
+    excerpt: str = Field(default="", description="Short quoted excerpt or description")
+    attachment_name: str | None = Field(default=None, description="Attachment filename if source='attachment'")
+    line_ref: str | None = Field(default=None, description="e.g. 'L47' or '47-52'")
+
+
+class ContradictionRef(BaseModel):
+    """A contradiction between live state and attachment expectation."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    expected: str = Field(default="", description="What the attachment said should be true")
+    observed: str = Field(default="", description="What live data shows")
+    attachment_name: str | None = Field(default=None)
+
+
+class EnrichmentRef(BaseModel):
+    """Attachment-sourced enrichment for a live finding (e.g. remediation steps)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    detail: str = Field(default="", description="Enrichment content (e.g. runbook guidance)")
+    attachment_name: str | None = Field(default=None)
+
+
+class AttachmentRef(BaseModel):
+    """A direct reference to an attachment that influenced a finding."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attachment_name: str = Field(default="")
+    relevance: str = Field(default="", description="Brief note on how this attachment influenced the finding")
+
+
 class AttachmentUsage(BaseModel):
     """Per-agent attachment usage record."""
 
@@ -600,6 +642,43 @@ class Finding(BaseModel):
         description=(
             "Attachment lines that influenced this finding. Populated by the reporter LLM when --attach was used."
         ),
+    )
+    source_support: Literal[
+        "live_only",
+        "attachment_only",
+        "live_and_attachment_corroborated",
+        "live_matches_expected_state",
+        "live_with_attachment_enrichment",
+        "live_vs_attachment_contradicts",
+        "live_matches_known_incident_pattern",
+    ] = Field(
+        default="live_only",
+        description=(
+            "Cross-source classification of this finding (SPEC-ATT-10 §6.5.2). "
+            "Set by the Analyzer when attachments are present. "
+            "Excluded from the Gemini response_schema — populated post-Gemini by skill.py."
+        ),
+        exclude=True,
+    )
+    supporting_evidence: list[EvidenceRef] = Field(
+        default_factory=list,
+        description="Structured evidence refs supporting this finding.",
+        exclude=True,
+    )
+    contradictions: list[ContradictionRef] = Field(
+        default_factory=list,
+        description="Contradictions between live state and attachment expectations.",
+        exclude=True,
+    )
+    enrichments: list[EnrichmentRef] = Field(
+        default_factory=list,
+        description="Attachment-sourced enrichments (e.g. runbook remediation steps).",
+        exclude=True,
+    )
+    attachment_references: list[AttachmentRef] = Field(
+        default_factory=list,
+        description="Direct attachment refs that influenced this finding.",
+        exclude=True,
     )
 
 
@@ -2119,6 +2198,19 @@ class HealthReportGeminiSchema(HealthReport):
         }
     )
 
+    # ATT-10 §6.5.2: Finding sub-fields to strip from the Gemini schema.
+    # These are populated post-Gemini by the pipeline and must not appear
+    # in the response_schema to keep the Gemini schema under budget.
+    _GEMINI_EXCLUDED_FINDING_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "source_support",
+            "supporting_evidence",
+            "contradictions",
+            "enrichments",
+            "attachment_references",
+        }
+    )
+
     model_config = ConfigDict(extra="ignore")
 
     @classmethod
@@ -2173,6 +2265,19 @@ class HealthReportGeminiSchema(HealthReport):
         req = schema.get("required")
         if isinstance(req, list):
             schema["required"] = [r for r in req if r not in excluded_names]
+
+        # ATT-10 §6.5.2: Strip post-hoc fields from the Finding $def
+        defs = schema.get("$defs")
+        if isinstance(defs, dict):
+            finding_def = defs.get("Finding")
+            if isinstance(finding_def, dict):
+                finding_props = finding_def.get("properties")
+                if isinstance(finding_props, dict):
+                    for name in cls._GEMINI_EXCLUDED_FINDING_FIELDS:
+                        finding_props.pop(name, None)
+                finding_req = finding_def.get("required")
+                if isinstance(finding_req, list):
+                    finding_def["required"] = [r for r in finding_req if r not in cls._GEMINI_EXCLUDED_FINDING_FIELDS]
 
         # Remove orphaned $defs (types only referenced by excluded fields)
         defs = schema.get("$defs")
