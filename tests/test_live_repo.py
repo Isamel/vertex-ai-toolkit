@@ -293,7 +293,7 @@ class TestRepoCfgWiring:
 
         mock_result = MagicMock()
         mock_result.structured_report = None
-        mock_result.text = ""
+        mock_result.synthesized_output = ""
 
         with (
             patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
@@ -326,7 +326,7 @@ class TestRepoCfgWiring:
 
         mock_result = MagicMock()
         mock_result.structured_report = None
-        mock_result.text = ""
+        mock_result.synthesized_output = ""
 
         with (
             patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
