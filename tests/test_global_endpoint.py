@@ -541,14 +541,16 @@ class TestGEP03RuntimeFlip:
                 raise api_429
             return "ok"
 
+        # Use root-level caplog so the result is not affected by logger-level
+        # mutations from other tests running in the full suite.
         with (
-            caplog.at_level(logging.WARNING, logger="vaig.core.client"),
+            caplog.at_level(logging.WARNING),
             patch("vaig.core.client.genai.Client"),
             patch("vaig.core.client.get_credentials", return_value=MagicMock()),
         ):
             client._retry_with_backoff(fn)
 
-        flip_logs = [r for r in caplog.records if "Endpoint flipped" in r.message]
+        flip_logs = [r for r in caplog.records if r.name == "vaig.core.client" and "Endpoint flipped" in r.message]
         assert flip_logs, "Expected at least one 'Endpoint flipped' WARNING log"
         assert "global" in flip_logs[0].message
         assert "us-central1" in flip_logs[0].message
