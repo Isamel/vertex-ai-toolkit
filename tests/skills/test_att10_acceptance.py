@@ -347,7 +347,7 @@ class TestSHATTH1:
             expected_replica_counts={"api": 3},
             runbook_hotspots=[hotspot1, hotspot2],
         )
-        assert len(priors.runbook_hotspots) >= 2  # noqa: PLR2004
+        assert len(priors.runbook_hotspots) == 2  # noqa: PLR2004
 
     def test_hotspot_entity_and_concern_accessible(self) -> None:
         """Hotspot fields entity and concern are accessible."""
@@ -417,6 +417,7 @@ class TestSHATTH2:
             attachment_name="runbook.md",
             relevance="DB pool oversaturation — known failure mode",
         )
+        object.__setattr__(f, "source_support", "live_with_attachment_enrichment")
         object.__setattr__(f, "attachment_references", [ref])
         report = _make_report(f)
 
@@ -431,6 +432,7 @@ class TestSHATTH2:
             attachment_name="runbook.md",
             relevance="DB pool oversaturation — known failure mode",
         )
+        object.__setattr__(f, "source_support", "live_with_attachment_enrichment")
         object.__setattr__(f, "attachment_references", [ref])
         report = _make_report(f)
 
