@@ -1122,7 +1122,9 @@ class TestPodMismatchDiagnostics:
         cpu_ts = _make_container_ts("monitoring-pod-abc123", "app", [0.3])
         mock_client.list_time_series.side_effect = [[cpu_ts], []]
 
-        with caplog.at_level(logging.DEBUG, logger="vaig.tools.gke.monitoring"):
+        # Set level on both the specific logger and the root logger so caplog
+        # captures DEBUG records regardless of the CI log propagation chain.
+        with caplog.at_level(logging.DEBUG):
             with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
                 get_workload_usage_metrics(
                     namespace="default",
