@@ -1511,6 +1511,21 @@ class RepoInvestigationConfig(BaseModel):
     truncation frequency. Reported via ``OrchestratorResult.attachment_truncated``
     and a structured warning log when the budget is hit.
     """
+    map_reduce_max_windows: int = 20
+    """Cap on Map-Reduce windows when attachment context exceeds the per-window budget.
+
+    Set to 1 to disable Map-Reduce (forces B1 single-window truncation behavior).
+    Hitting the cap sets ``OrchestratorResult.attachment_truncated=True`` and appends
+    a ``map_reduce`` ``EvidenceGap``. Default 20 ≈ 2.5 MB ceiling (20 × 128 KB) —
+    bounds worst-case cost at ~20× single-run pricing.
+    """
+
+    @field_validator("map_reduce_max_windows")
+    @classmethod
+    def _validate_map_reduce_max_windows(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("map_reduce_max_windows must be >= 1")
+        return v
 
     @model_validator(mode="after")
     def _sanity(self) -> Self:
