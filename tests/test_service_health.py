@@ -186,12 +186,12 @@ class TestServiceHealthSkillAgentsConfig:
 
         skill = ServiceHealthSkill()
         agents = skill.get_sequential_agents_config()
-        # Gatherer uses pro model for complex tool use
-        assert agents[0]["model"] == "gemini-2.5-pro"
-        # Analyzer, verifier, and reporter use flash for speed
-        assert agents[1]["model"] == "gemini-2.5-flash"
-        assert agents[2]["model"] == "gemini-2.5-flash"
-        assert agents[3]["model"] == "gemini-2.5-flash"
+        # All agents now use sentinel "" — the orchestrator resolves the
+        # concrete model name from Settings at runtime (SPEC-10).
+        assert agents[0]["model"] == ""
+        assert agents[1]["model"] == ""
+        assert agents[2]["model"] == ""
+        assert agents[3]["model"] == ""
 
     def test_gatherer_requires_tools_true(self) -> None:
         """The health_gatherer MUST have requires_tools=True.
@@ -351,7 +351,7 @@ class TestServiceHealthSkillAgentsConfig:
         skill = ServiceHealthSkill()
         agents = skill.get_sequential_agents_config()
         verifier = agents[2]
-        assert verifier["model"] == "gemini-2.5-flash"
+        assert verifier["model"] == ""
 
 
 class TestServiceHealthSkillPromptContent:
@@ -659,8 +659,10 @@ class TestServiceHealthToolAccuracyConstraints:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         assert "use kubectl_get to retrieve events" not in HEALTH_GATHERER_PROMPT.lower()
-        assert "use `kubectl_get` to retrieve" not in HEALTH_GATHERER_PROMPT.lower() or \
-            "events" not in HEALTH_GATHERER_PROMPT.lower().split("use `kubectl_get` to retrieve")[1].split("\n")[0]
+        assert (
+            "use `kubectl_get` to retrieve" not in HEALTH_GATHERER_PROMPT.lower()
+            or "events" not in HEALTH_GATHERER_PROMPT.lower().split("use `kubectl_get` to retrieve")[1].split("\n")[0]
+        )
 
     # ── Analyzer: confidence taxonomy and verification gaps ──
 
@@ -695,9 +697,11 @@ class TestServiceHealthToolAccuracyConstraints:
         """Reporter MUST instruct showing corrected YAML when fixes are proposed."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "Corrected YAML" in HEALTH_REPORTER_PROMPT or \
-            "CORRECTED YAML" in HEALTH_REPORTER_PROMPT or \
-            "corrected YAML" in HEALTH_REPORTER_PROMPT
+        assert (
+            "Corrected YAML" in HEALTH_REPORTER_PROMPT
+            or "CORRECTED YAML" in HEALTH_REPORTER_PROMPT
+            or "corrected YAML" in HEALTH_REPORTER_PROMPT
+        )
 
     def test_reporter_mentions_get_rollout_history_for_rollbacks(self) -> None:
         """Reporter MUST reference get_rollout_history before recommending rollback."""
@@ -771,8 +775,7 @@ class TestServiceHealthVerifierPrompt:
         """Verifier must pass through already-CONFIRMED findings unchanged."""
         from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
 
-        assert "Pass through" in HEALTH_VERIFIER_PROMPT or \
-            "pass through" in HEALTH_VERIFIER_PROMPT
+        assert "Pass through" in HEALTH_VERIFIER_PROMPT or "pass through" in HEALTH_VERIFIER_PROMPT
 
 
 class TestServiceHealthTwoPassPromptModifications:
@@ -818,8 +821,7 @@ class TestServiceHealthTwoPassPromptModifications:
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
         # Reporter must acknowledge that findings are verified
-        assert "verified" in HEALTH_REPORTER_PROMPT.lower() or \
-            "VERIFIED" in HEALTH_REPORTER_PROMPT
+        assert "verified" in HEALTH_REPORTER_PROMPT.lower() or "VERIFIED" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_no_silent_omission(self) -> None:
         """Reporter must never silently omit downgraded findings."""
@@ -856,8 +858,7 @@ class TestServiceHealthPromptEnhancements:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         prompt_lower = HEALTH_GATHERER_PROMPT.lower()
-        assert "narrow" in prompt_lower or "time range" in prompt_lower or \
-            "time_range" in prompt_lower
+        assert "narrow" in prompt_lower or "time range" in prompt_lower or "time_range" in prompt_lower
 
     # ── Analyzer: exec_command verification gaps ─────────
 
@@ -894,8 +895,7 @@ class TestServiceHealthPromptEnhancements:
         from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
 
         prompt_lower = HEALTH_VERIFIER_PROMPT.lower()
-        assert "exec is disabled" in prompt_lower or \
-            "exec_enabled" in HEALTH_VERIFIER_PROMPT
+        assert "exec is disabled" in prompt_lower or "exec_enabled" in HEALTH_VERIFIER_PROMPT
 
 
 # ── 8 Prompt Consistency Fixes — Regression Tests ────────────────
@@ -946,8 +946,10 @@ class TestPromptConsistencyFix1GathererStructuredOutput:
         """Gatherer must state sections are NOT optional."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "NOT optional" in HEALTH_GATHERER_PROMPT or \
-            "CRITICAL" in HEALTH_GATHERER_PROMPT.split("MANDATORY OUTPUT FORMAT")[1]
+        assert (
+            "NOT optional" in HEALTH_GATHERER_PROMPT
+            or "CRITICAL" in HEALTH_GATHERER_PROMPT.split("MANDATORY OUTPUT FORMAT")[1]
+        )
 
 
 class TestPromptConsistencyFix2ReporterDeterministicTimeline:
@@ -985,9 +987,7 @@ class TestPromptConsistencyFix2ReporterDeterministicTimeline:
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
         # JSON schema uses structured fields instead of table format
-        timeline_section = HEALTH_REPORTER_PROMPT[
-            HEALTH_REPORTER_PROMPT.find("Timeline (MANDATORY)"):
-        ]
+        timeline_section = HEALTH_REPORTER_PROMPT[HEALTH_REPORTER_PROMPT.find("Timeline (MANDATORY)") :]
         assert "``time``" in timeline_section
         assert "``event``" in timeline_section
         assert "``severity``" in timeline_section
@@ -1104,8 +1104,7 @@ class TestPromptConsistencyFix4AnalyzerStructuredSummary:
         """Summary must appear even with zero findings."""
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
-        assert "zero findings" in HEALTH_ANALYZER_PROMPT or \
-            "No issues detected" in HEALTH_ANALYZER_PROMPT
+        assert "zero findings" in HEALTH_ANALYZER_PROMPT or "No issues detected" in HEALTH_ANALYZER_PROMPT
 
 
 class TestPromptConsistencyFix5ReporterEvidencePresentation:
@@ -1142,8 +1141,7 @@ class TestPromptConsistencyFix5ReporterEvidencePresentation:
         """Reporter must never say 'tools reported errors' without the actual text."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "ACTUAL error text" in HEALTH_REPORTER_PROMPT or \
-            "without showing the ACTUAL" in HEALTH_REPORTER_PROMPT
+        assert "ACTUAL error text" in HEALTH_REPORTER_PROMPT or "without showing the ACTUAL" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_evidence_preserve_upstream_output(self) -> None:
         """Reporter must preserve upstream kubectl/tool output."""
@@ -1303,9 +1301,7 @@ class TestServiceHealthTemperatureConfig:
 
         skill = ServiceHealthSkill()
         for agent in skill.get_sequential_agents_config():
-            assert agent["temperature"] < 0.7, (
-                f"{agent['name']} temperature {agent['temperature']} is not below 0.7"
-            )
+            assert agent["temperature"] < 0.7, f"{agent['name']} temperature {agent['temperature']} is not below 0.7"
 
 
 class TestServiceHealthRequiredOutputSections:
@@ -1381,7 +1377,7 @@ class TestGathererCloudLoggingMandatory:
 
         # Extract Step 7 header line — use "### Step" to skip overview line
         step7_start = HEALTH_GATHERER_PROMPT.find("### Step 7")
-        step7_header = HEALTH_GATHERER_PROMPT[step7_start:step7_start + 100]
+        step7_header = HEALTH_GATHERER_PROMPT[step7_start : step7_start + 100]
         assert "ALWAYS" in step7_header
 
     def test_step_7_references_gcloud_logging_query(self) -> None:
@@ -1481,9 +1477,7 @@ class TestGathererCloudLoggingMandatoryOutput:
         """Cloud Logging Findings must appear in the MANDATORY OUTPUT FORMAT."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        mandatory_section = HEALTH_GATHERER_PROMPT[
-            HEALTH_GATHERER_PROMPT.find("MANDATORY OUTPUT FORMAT"):
-        ]
+        mandatory_section = HEALTH_GATHERER_PROMPT[HEALTH_GATHERER_PROMPT.find("MANDATORY OUTPUT FORMAT") :]
         assert "### Cloud Logging Findings" in mandatory_section
 
     def test_cloud_logging_findings_listed_as_not_optional(self) -> None:
@@ -1595,7 +1589,7 @@ class TestReporterSeverityClassification:
         assert "Anti-Copy Rule" in HEALTH_REPORTER_PROMPT
         # Must mention that K8s says Warning but operational impact is CRITICAL
         anti_copy_start = HEALTH_REPORTER_PROMPT.find("Anti-Copy Rule")
-        anti_copy_section = HEALTH_REPORTER_PROMPT[anti_copy_start:anti_copy_start + 500]
+        anti_copy_section = HEALTH_REPORTER_PROMPT[anti_copy_start : anti_copy_start + 500]
         assert "FailedCreate" in anti_copy_section
         assert "CRITICAL" in anti_copy_section
 
@@ -1626,7 +1620,7 @@ class TestReporterSeverityClassification:
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
         timeline_start = HEALTH_REPORTER_PROMPT.find("### Timeline")
-        timeline_section = HEALTH_REPORTER_PROMPT[timeline_start:timeline_start + 500]
+        timeline_section = HEALTH_REPORTER_PROMPT[timeline_start : timeline_start + 500]
         assert "operational severity" in timeline_section.lower()
 
 
@@ -1648,8 +1642,7 @@ class TestPromptSchemaParameterConsistency:
         calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_GATHERER_PROMPT)
         for call in calls:
             assert "pod_name" not in call, (
-                f"Gatherer prompt uses 'pod_name' in kubectl_logs call: {call}. "
-                "Schema parameter is 'pod'."
+                f"Gatherer prompt uses 'pod_name' in kubectl_logs call: {call}. Schema parameter is 'pod'."
             )
 
     def test_gatherer_no_pod_name_for_get_container_status(self) -> None:
@@ -1661,8 +1654,7 @@ class TestPromptSchemaParameterConsistency:
         calls = re.findall(r"get_container_status\([^)]+\)", HEALTH_GATHERER_PROMPT)
         for call in calls:
             assert "pod_name" not in call, (
-                f"Gatherer prompt uses 'pod_name' in get_container_status call: {call}. "
-                "Schema parameter is 'name'."
+                f"Gatherer prompt uses 'pod_name' in get_container_status call: {call}. Schema parameter is 'name'."
             )
 
     def test_gatherer_no_previous_for_kubectl_logs(self) -> None:
@@ -1687,8 +1679,7 @@ class TestPromptSchemaParameterConsistency:
         calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_ANALYZER_PROMPT)
         for call in calls:
             assert "pod_name" not in call, (
-                f"Analyzer prompt uses 'pod_name' in kubectl_logs call: {call}. "
-                "Schema parameter is 'pod'."
+                f"Analyzer prompt uses 'pod_name' in kubectl_logs call: {call}. Schema parameter is 'pod'."
             )
 
     def test_tool_call_reference_section_exists(self) -> None:
@@ -1721,9 +1712,7 @@ class TestPromptSchemaParameterConsistency:
             "gcloud_monitoring_query",
         ]
         for tool in expected_tools:
-            assert tool in ref_section, (
-                f"Tool Call Reference section missing tool: {tool}"
-            )
+            assert tool in ref_section, f"Tool Call Reference section missing tool: {tool}"
 
     def test_tool_call_reference_warns_about_common_mistakes(self) -> None:
         """Tool Call Reference must explicitly warn about common parameter name mistakes."""
@@ -1957,10 +1946,8 @@ class TestReporterRemediationReasoningFramework:
         """Reporter must separate immediate mitigation from permanent fix."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "Immediate mitigation" in HEALTH_REPORTER_PROMPT or \
-            "**Immediate mitigation**" in HEALTH_REPORTER_PROMPT
-        assert "Permanent fix" in HEALTH_REPORTER_PROMPT or \
-            "**Permanent fix**" in HEALTH_REPORTER_PROMPT
+        assert "Immediate mitigation" in HEALTH_REPORTER_PROMPT or "**Immediate mitigation**" in HEALTH_REPORTER_PROMPT
+        assert "Permanent fix" in HEALTH_REPORTER_PROMPT or "**Permanent fix**" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_warns_against_gitops_drift(self) -> None:
         """Reporter must warn that kubectl apply creates GitOps drift."""
@@ -2020,8 +2007,10 @@ class TestGathererManagementAnnotationDetection:
         """Gatherer must instruct looking for management annotations."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "management annotations" in HEALTH_GATHERER_PROMPT.lower() or \
-            "management indicators" in HEALTH_GATHERER_PROMPT.lower()
+        assert (
+            "management annotations" in HEALTH_GATHERER_PROMPT.lower()
+            or "management indicators" in HEALTH_GATHERER_PROMPT.lower()
+        )
 
     def test_gatherer_mentions_argocd_annotations(self) -> None:
         """Gatherer must mention ArgoCD annotations."""
@@ -2052,8 +2041,10 @@ class TestGathererManagementAnnotationDetection:
         """Gatherer must mention webhook injection annotations in template metadata."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "webhook injection annotations" in HEALTH_GATHERER_PROMPT.lower() or \
-            ".spec.template.metadata.annotations" in HEALTH_GATHERER_PROMPT
+        assert (
+            "webhook injection annotations" in HEALTH_GATHERER_PROMPT.lower()
+            or ".spec.template.metadata.annotations" in HEALTH_GATHERER_PROMPT
+        )
 
     def test_gatherer_reports_indicators_for_reporter(self) -> None:
         """Gatherer must explicitly state that management indicators are for the reporter."""
@@ -2082,7 +2073,7 @@ class TestAnalyzerManagementContextDetection:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
-        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start : mgmt_start + 600]
         assert "GitOps-managed" in mgmt_section
         assert "ArgoCD" in mgmt_section or "Flux" in mgmt_section
 
@@ -2091,7 +2082,7 @@ class TestAnalyzerManagementContextDetection:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
-        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start : mgmt_start + 600]
         assert "Helm-managed" in mgmt_section
         assert "helm upgrade" in mgmt_section
 
@@ -2100,7 +2091,7 @@ class TestAnalyzerManagementContextDetection:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
-        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start : mgmt_start + 600]
         assert "Operator-managed" in mgmt_section
         assert "OwnerReferences" in mgmt_section
 
@@ -2109,7 +2100,7 @@ class TestAnalyzerManagementContextDetection:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
-        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start : mgmt_start + 600]
         assert "Manual" in mgmt_section
 
     def test_analyzer_includes_managed_by_in_findings(self) -> None:
@@ -2160,9 +2151,7 @@ class TestParallelAgentsConfig:
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
-            assert agent["name"].endswith("_gatherer"), (
-                f"Parallel agent '{agent['name']}' must end with '_gatherer'"
-            )
+            assert agent["name"].endswith("_gatherer"), f"Parallel agent '{agent['name']}' must end with '_gatherer'"
 
     def test_exact_gatherer_names(self) -> None:
         """Gatherer names must be the 4 expected sub-gatherer names."""
@@ -2183,22 +2172,18 @@ class TestParallelAgentsConfig:
         assert names == ["health_analyzer", "health_verifier", "health_reporter"]
 
     def test_all_gatherers_use_pro_model(self) -> None:
-        """All 4 parallel gatherers must use gemini-2.5-pro for quality."""
+        """All parallel gatherers use sentinel '' — resolved to specialist_model at runtime (SPEC-10)."""
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
-            assert agent["model"] == "gemini-2.5-pro", (
-                f"Gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-pro'"
-            )
+            assert agent["model"] == "", f"Gatherer '{agent['name']}' uses '{agent['model']}', expected sentinel ''"
 
     def test_all_gatherers_require_tools(self) -> None:
         """All 4 parallel gatherers must have requires_tools=True."""
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
-            assert agent.get("requires_tools") is True, (
-                f"Gatherer '{agent['name']}' must have requires_tools=True"
-            )
+            assert agent.get("requires_tools") is True, f"Gatherer '{agent['name']}' must have requires_tools=True"
 
     def test_gatherer_max_iterations_within_range(self) -> None:
         """All gatherers must have max_iterations between 8 and 20 (inclusive).
@@ -2211,19 +2196,14 @@ class TestParallelAgentsConfig:
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
             iters = agent.get("max_iterations", 0)
-            assert 8 <= iters <= 20, (
-                f"Gatherer '{agent['name']}' has max_iterations={iters}, "
-                "expected 8–20"
-            )
+            assert 8 <= iters <= 20, f"Gatherer '{agent['name']}' has max_iterations={iters}, expected 8–20"
 
     def test_gatherer_temperature_is_zero(self) -> None:
         """All gatherers must use temperature=0.0 for deterministic tool use."""
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
-            assert agent.get("temperature") == 0.0, (
-                f"Gatherer '{agent['name']}' must have temperature=0.0"
-            )
+            assert agent.get("temperature") == 0.0, f"Gatherer '{agent['name']}' must have temperature=0.0"
 
     def test_all_gatherers_have_system_instruction(self) -> None:
         """All 4 gatherers must have a non-empty system_instruction string."""
@@ -2232,9 +2212,7 @@ class TestParallelAgentsConfig:
         for agent in parallel:
             assert "system_instruction" in agent
             assert isinstance(agent["system_instruction"], str)
-            assert len(agent["system_instruction"]) > 100, (
-                f"Gatherer '{agent['name']}' system_instruction too short"
-            )
+            assert len(agent["system_instruction"]) > 100, f"Gatherer '{agent['name']}' system_instruction too short"
 
     def test_all_gatherer_prompts_contain_anti_injection_rule(self) -> None:
         """Every gatherer prompt must embed ANTI_INJECTION_RULE for security."""
@@ -2246,8 +2224,7 @@ class TestParallelAgentsConfig:
         fragment = "EXTERNAL, UNTRUSTED sources"
         for agent in parallel:
             assert fragment in agent["system_instruction"], (
-                f"Gatherer '{agent['name']}' prompt is missing ANTI_INJECTION_RULE. "
-                f"Expected fragment: '{fragment}'"
+                f"Gatherer '{agent['name']}' prompt is missing ANTI_INJECTION_RULE. Expected fragment: '{fragment}'"
             )
         assert fragment in ANTI_INJECTION_RULE  # Sanity-check the fragment itself
 
@@ -2375,9 +2352,7 @@ class TestParallelSubGathererPromptBuilders:
             build_logging_gatherer_prompt,
         ]:
             result = fn()
-            assert fragment in result, (
-                f"{fn.__name__}() is missing ANTI_INJECTION_RULE fragment '{fragment}'"
-            )
+            assert fragment in result, f"{fn.__name__}() is missing ANTI_INJECTION_RULE fragment '{fragment}'"
 
     def test_node_gatherer_prompt_no_pod_name_parameter(self) -> None:
         """node_gatherer prompt must not use 'pod_name' — correct param is 'pod'."""
@@ -2397,9 +2372,7 @@ class TestParallelSubGathererPromptBuilders:
 
         calls = re.findall(r"kubectl_logs\([^)]+\)", build_workload_gatherer_prompt())
         for call in calls:
-            assert "pod_name" not in call, (
-                f"workload_gatherer uses 'pod_name' in kubectl_logs: {call}"
-            )
+            assert "pod_name" not in call, f"workload_gatherer uses 'pod_name' in kubectl_logs: {call}"
 
 
 class TestBuildReporterPromptConditional:
@@ -2630,9 +2603,7 @@ class TestServiceStatusColumnPreservation:
             "Primary Issue",
         ]
         for col in required_columns:
-            assert col in HEALTH_ANALYZER_PROMPT, (
-                f"Analyzer Service Status Summary is missing column: '{col}'"
-            )
+            assert col in HEALTH_ANALYZER_PROMPT, f"Analyzer Service Status Summary is missing column: '{col}'"
 
     def test_analyzer_service_status_preserves_workload_gatherer_columns(self) -> None:
         """Analyzer prompt must instruct the model to PRESERVE gatherer columns, not reduce them."""
@@ -2681,8 +2652,7 @@ class TestDatadogAPMTagResolution:
         from vaig.skills.service_health.prompts import _DATADOG_API_STEP
 
         assert "tags.datadoghq.com/env" in _DATADOG_API_STEP, (
-            "_DATADOG_API_STEP must reference 'tags.datadoghq.com/env' "
-            "as Tier 1 label for APM env parameter."
+            "_DATADOG_API_STEP must reference 'tags.datadoghq.com/env' as Tier 1 label for APM env parameter."
         )
 
     def test_apm_step_instructs_always_attempt_calls(self) -> None:
@@ -2724,8 +2694,7 @@ class TestDatadogAPMTagResolution:
             "tags.datadoghq.com/service for APM tag resolution."
         )
         assert "get_datadog_apm_services()" not in prompt, (
-            "workload_gatherer prompt must NOT contain a no-arg "
-            "get_datadog_apm_services() example."
+            "workload_gatherer prompt must NOT contain a no-arg get_datadog_apm_services() example."
         )
 
     def test_gatherer_prompt_apm_step_uses_unified_tagging(self) -> None:
@@ -2740,8 +2709,7 @@ class TestDatadogAPMTagResolution:
             "tags.datadoghq.com/service for APM tag resolution."
         )
         assert "get_datadog_apm_services()" not in prompt, (
-            "Sequential gatherer prompt must NOT contain a no-arg "
-            "get_datadog_apm_services() example."
+            "Sequential gatherer prompt must NOT contain a no-arg get_datadog_apm_services() example."
         )
 
     def test_workload_gatherer_prompt_has_k8s_priority_hierarchy(self) -> None:
@@ -2759,8 +2727,7 @@ class TestDatadogAPMTagResolution:
             "to ensure the LLM never overrides K8s truth with Datadog results."
         )
         assert "ABSOLUTE source of truth" in prompt, (
-            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE "
-            "source of truth for deployment status."
+            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE source of truth for deployment status."
         )
         assert "monitoring not configured" in prompt or "not monitored" in prompt, (
             "Prompt must clarify that empty Datadog results mean 'monitoring not "
@@ -2773,12 +2740,9 @@ class TestDatadogAPMTagResolution:
 
         prompt = build_gatherer_prompt(datadog_api_enabled=True)
 
-        assert "PRIORITY HIERARCHY" in prompt, (
-            "Sequential gatherer prompt must contain PRIORITY HIERARCHY section."
-        )
+        assert "PRIORITY HIERARCHY" in prompt, "Sequential gatherer prompt must contain PRIORITY HIERARCHY section."
         assert "ABSOLUTE source of truth" in prompt, (
-            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE "
-            "source of truth for deployment status."
+            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE source of truth for deployment status."
         )
 
     def test_datadog_step_moved_to_dedicated_gatherer_prompt(self) -> None:
@@ -2796,9 +2760,7 @@ class TestDatadogAPMTagResolution:
         )
 
         workload_prompt = build_workload_gatherer_prompt(namespace="default")
-        datadog_prompt = build_datadog_gatherer_prompt(
-            namespace="default", datadog_api_enabled=True
-        )
+        datadog_prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
 
         # The injected Datadog step block must NOT be in workload_gatherer_prompt
         assert "DD_SERVICE / DD_ENV bridge to Step 12" not in workload_prompt, (
@@ -2808,8 +2770,7 @@ class TestDatadogAPMTagResolution:
 
         # Datadog API correlation must be the core content of datadog_gatherer_prompt
         assert "Datadog API correlation data" in datadog_prompt, (
-            "build_datadog_gatherer_prompt must contain 'Datadog API correlation data' "
-            "when datadog_api_enabled=True."
+            "build_datadog_gatherer_prompt must contain 'Datadog API correlation data' when datadog_api_enabled=True."
         )
 
         # Must still appear before the output format section (original regression guard)
@@ -2846,7 +2807,8 @@ class TestNamespacePropagation:
 
         # Only check namespace-scoped gatherers — node_gatherer is cluster-scoped
         namespace_scoped = [
-            a for a in agents
+            a
+            for a in agents
             if a.get("parallel_group") == "gather"
             and a.get("name") in ("workload_gatherer", "event_gatherer", "logging_gatherer")
         ]
@@ -2923,8 +2885,7 @@ class TestTargetPlaceholderReplacement:
 
         prompt = build_workload_gatherer_prompt(namespace="odin-dev")
         assert "odin-dev" in prompt, (
-            "build_workload_gatherer_prompt does not inject the namespace value "
-            "into tool call examples."
+            "build_workload_gatherer_prompt does not inject the namespace value into tool call examples."
         )
 
     def test_event_gatherer_injects_namespace_value(self) -> None:
@@ -2933,8 +2894,7 @@ class TestTargetPlaceholderReplacement:
 
         prompt = build_event_gatherer_prompt(namespace="odin-dev")
         assert "odin-dev" in prompt, (
-            "build_event_gatherer_prompt does not inject the namespace value "
-            "into tool call examples."
+            "build_event_gatherer_prompt does not inject the namespace value into tool call examples."
         )
 
     def test_workload_gatherer_default_namespace_no_target_placeholder(self) -> None:
@@ -3028,9 +2988,7 @@ class TestDatadogGathererPromptBuilder:
 
         fragment = "EXTERNAL, UNTRUSTED sources"
         prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
-        assert fragment in prompt, (
-            f"build_datadog_gatherer_prompt is missing ANTI_INJECTION_RULE fragment '{fragment}'"
-        )
+        assert fragment in prompt, f"build_datadog_gatherer_prompt is missing ANTI_INJECTION_RULE fragment '{fragment}'"
 
     def test_prompt_injects_namespace_value(self) -> None:
         """build_datadog_gatherer_prompt must embed the supplied namespace."""
@@ -3091,12 +3049,10 @@ class TestDatadogGathererPipelineConfig:
         assert "datadog_gatherer" in names
 
     def test_datadog_gatherer_uses_flash_model(self) -> None:
-        """datadog_gatherer must use gemini-2.5-flash (cost-optimised for API calls)."""
+        """datadog_gatherer uses sentinel '' — resolved to specialist_model at runtime (SPEC-10)."""
         agents = self._get_agents(datadog_enabled=True)
         datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
-        assert datadog_agent["model"] == "gemini-2.5-flash", (
-            f"datadog_gatherer uses '{datadog_agent['model']}', expected 'gemini-2.5-flash'"
-        )
+        assert datadog_agent["model"] == "", f"datadog_gatherer uses '{datadog_agent['model']}', expected sentinel ''"
 
     def test_datadog_gatherer_max_iterations_is_twelve(self) -> None:
         """datadog_gatherer must have max_iterations=12 (resource-gated tool expansion requires extra iterations)."""
@@ -3125,17 +3081,13 @@ class TestDatadogGathererPipelineConfig:
     def test_pipeline_has_eight_agents_when_datadog_enabled(self) -> None:
         """When Datadog is enabled, parallel pipeline must have 8 agents total."""
         agents = self._get_agents(datadog_enabled=True)
-        assert len(agents) == 8, (
-            f"Expected 8 agents with Datadog enabled, got {len(agents)}"
-        )
+        assert len(agents) == 8, f"Expected 8 agents with Datadog enabled, got {len(agents)}"
 
     def test_pipeline_has_five_parallel_gatherers_when_datadog_enabled(self) -> None:
         """When Datadog is enabled, 5 agents must carry parallel_group='gather'."""
         agents = self._get_agents(datadog_enabled=True)
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
-        assert len(parallel) == 5, (
-            f"Expected 5 parallel gatherers with Datadog enabled, got {len(parallel)}"
-        )
+        assert len(parallel) == 5, f"Expected 5 parallel gatherers with Datadog enabled, got {len(parallel)}"
 
     def test_pipeline_gatherer_names_with_datadog_enabled(self) -> None:
         """With Datadog enabled, gatherer names must include all 5 expected agents."""
@@ -3150,19 +3102,16 @@ class TestDatadogGathererPipelineConfig:
         }
 
     def test_core_gatherers_use_pro_model_datadog_uses_flash(self) -> None:
-        """The 4 core gatherers must use gemini-2.5-pro; datadog_gatherer uses gemini-2.5-flash."""
+        """All agents use sentinel '' — resolved to specialist_model at runtime (SPEC-10)."""
         agents = self._get_agents(datadog_enabled=True)
-        core_gatherers = [
-            a for a in agents
-            if a.get("parallel_group") == "gather" and a["name"] != "datadog_gatherer"
-        ]
+        core_gatherers = [a for a in agents if a.get("parallel_group") == "gather" and a["name"] != "datadog_gatherer"]
         for agent in core_gatherers:
-            assert agent["model"] == "gemini-2.5-pro", (
-                f"Core gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-pro'"
+            assert agent["model"] == "", (
+                f"Core gatherer '{agent['name']}' uses '{agent['model']}', expected sentinel ''"
             )
 
         datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
-        assert datadog_agent["model"] == "gemini-2.5-flash"
+        assert datadog_agent["model"] == ""
 
 
 class TestWorkloadGathererSplit:
@@ -3246,9 +3195,7 @@ class TestEventGathererNoPhantomInstruction:
         assert "query_datadog_metrics" not in prompt, (
             "event_gatherer must not contain Datadog API tool calls — those belong to datadog_gatherer."
         )
-        assert "get_datadog_monitors" not in prompt, (
-            "event_gatherer must not contain 'get_datadog_monitors'."
-        )
+        assert "get_datadog_monitors" not in prompt, "event_gatherer must not contain 'get_datadog_monitors'."
 
 
 # ── Ownership chain tracing — prompt content ─────────────────
@@ -3266,9 +3213,7 @@ class TestWorkloadGathererOwnershipChainInstructions:
         from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
 
         prompt = build_workload_gatherer_prompt(namespace="default")
-        assert "Step 4c" in prompt, (
-            "workload_gatherer prompt is missing Step 4c — ownership chain tracing block."
-        )
+        assert "Step 4c" in prompt, "workload_gatherer prompt is missing Step 4c — ownership chain tracing block."
 
     def test_prompt_instructs_tracing_owner_references(self) -> None:
         """Prompt must tell agent to inspect ownerReferences to find owning ReplicaSet."""
@@ -3297,9 +3242,7 @@ class TestWorkloadGathererOwnershipChainInstructions:
         from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
 
         prompt = build_workload_gatherer_prompt(namespace="default")
-        assert "CrashLoopBackOff" in prompt, (
-            "Step 4c must explicitly mention CrashLoopBackOff as a trigger state."
-        )
+        assert "CrashLoopBackOff" in prompt, "Step 4c must explicitly mention CrashLoopBackOff as a trigger state."
 
     def test_prompt_instructs_revision_correlation(self) -> None:
         """Prompt must tell the agent to correlate the failing RS to a rollout revision."""
@@ -3352,9 +3295,7 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
         from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
 
         prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
-        assert "rollout_status" in prompt, (
-            "Step 4d must instruct the agent to report rollout_status for each Rollout."
-        )
+        assert "rollout_status" in prompt, "Step 4d must instruct the agent to report rollout_status for each Rollout."
 
     def test_hpa_conditions_instructions_present(self) -> None:
         """Step 4d must instruct the agent to extract HPA conditions for Rollout-targeted HPAs."""
@@ -3371,8 +3312,7 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
 
         prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
         assert "scaleTargetRef" in prompt, (
-            "Step 4d must mention 'scaleTargetRef' to tell the agent how to detect "
-            "HPAs that target a Rollout."
+            "Step 4d must mention 'scaleTargetRef' to tell the agent how to detect HPAs that target a Rollout."
         )
 
     def test_enrichment_instructions_absent_when_argo_disabled(self) -> None:
@@ -3396,7 +3336,6 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
         assert '"rollout_status:' not in prompt, (
             "The rollout_status output instruction must only appear when argo_rollouts_enabled=True."
         )
-
 
     def test_bluegreen_camelcase_normalization_instruction_present(self) -> None:
         """Step g must explicitly instruct the agent to normalize 'blueGreen' → 'blue-green'."""
@@ -3497,8 +3436,7 @@ class TestAPMSeverityThresholds:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         assert "NOT subordinate to Kubernetes findings" in HEALTH_ANALYZER_PROMPT, (
-            "Analyzer prompt must explicitly state APM findings are 'NOT subordinate "
-            "to Kubernetes findings'."
+            "Analyzer prompt must explicitly state APM findings are 'NOT subordinate to Kubernetes findings'."
         )
 
     def test_analyzer_references_43_percent_error_rate_example(self) -> None:
@@ -3515,7 +3453,7 @@ class TestAPMSeverityThresholds:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         assert 'category="apm"' in HEALTH_ANALYZER_PROMPT, (
-            "Analyzer prompt must instruct creating findings with category=\"apm\"."
+            'Analyzer prompt must instruct creating findings with category="apm".'
         )
 
     def test_analyzer_section_numbering_after_apm_insertion(self) -> None:
@@ -3539,8 +3477,7 @@ class TestAPMSeverityThresholds:
 
         prompt = build_reporter_prompt(datadog_api_enabled=True)
         assert "Standalone APM Findings" in prompt, (
-            "Reporter prompt must contain 'Standalone APM Findings' section "
-            "when datadog_api_enabled=True."
+            "Reporter prompt must contain 'Standalone APM Findings' section when datadog_api_enabled=True."
         )
 
     def test_reporter_standalone_apm_not_in_default_prompt(self) -> None:
@@ -3549,8 +3486,7 @@ class TestAPMSeverityThresholds:
 
         prompt = build_reporter_prompt(datadog_api_enabled=False)
         assert "Standalone APM Findings" not in prompt, (
-            "Default reporter prompt (datadog disabled) must NOT contain "
-            "'Standalone APM Findings' guidance."
+            "Default reporter prompt (datadog disabled) must NOT contain 'Standalone APM Findings' guidance."
         )
 
     def test_reporter_references_43_percent_critical(self) -> None:
@@ -3559,8 +3495,7 @@ class TestAPMSeverityThresholds:
 
         prompt = build_reporter_prompt(datadog_api_enabled=True)
         assert "43% error rate is CRITICAL" in prompt, (
-            "Reporter prompt must state '43% error rate is CRITICAL regardless of "
-            "Kubernetes pod health'."
+            "Reporter prompt must state '43% error rate is CRITICAL regardless of Kubernetes pod health'."
         )
 
     def test_reporter_apm_findings_alongside_k8s(self) -> None:
@@ -3735,11 +3670,7 @@ class TestExtractDdService:
                 name="my-deploy",
                 labels={"tags.datadoghq.com/service": "dd-wl-svc"},
             ),
-            spec=_FakeSpec(
-                template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(labels={"app": "legacy-app"})
-                )
-            ),
+            spec=_FakeSpec(template=_FakePodTemplateSpec(metadata=_FakePodTemplateMeta(labels={"app": "legacy-app"}))),
         )
         assert _extract_dd_service(item) == "dd-wl-svc"
 
@@ -3751,9 +3682,7 @@ class TestExtractDdService:
             metadata=_FakeMeta(name="my-deploy"),
             spec=_FakeSpec(
                 template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(
-                        labels={"app.kubernetes.io/name": "k8s-name-svc"}
-                    )
+                    metadata=_FakePodTemplateMeta(labels={"app.kubernetes.io/name": "k8s-name-svc"})
                 )
             ),
         )
@@ -3765,11 +3694,7 @@ class TestExtractDdService:
 
         item = _FakeItem(
             metadata=_FakeMeta(name="my-deploy"),
-            spec=_FakeSpec(
-                template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(labels={"app": "legacy-svc"})
-                )
-            ),
+            spec=_FakeSpec(template=_FakePodTemplateSpec(metadata=_FakePodTemplateMeta(labels={"app": "legacy-svc"}))),
         )
         assert _extract_dd_service(item) == "legacy-svc"
 
@@ -3779,11 +3704,7 @@ class TestExtractDdService:
 
         item = _FakeItem(
             metadata=_FakeMeta(name="fallback-deploy"),
-            spec=_FakeSpec(
-                template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(labels={})
-                )
-            ),
+            spec=_FakeSpec(template=_FakePodTemplateSpec(metadata=_FakePodTemplateMeta(labels={}))),
         )
         assert _extract_dd_service(item) == "fallback-deploy"
 
@@ -3849,28 +3770,26 @@ class TestResolveDdServiceName:
 
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
-        deploys = _FakeListResult([
-            _FakeItem(
-                metadata=_FakeMeta(name="frontend"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "frontend-svc"}
+        deploys = _FakeListResult(
+            [
+                _FakeItem(
+                    metadata=_FakeMeta(name="frontend"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "frontend-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-            _FakeItem(
-                metadata=_FakeMeta(name="backend"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "backend-svc"}
+                _FakeItem(
+                    metadata=_FakeMeta(name="backend"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "backend-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-        ])
+            ]
+        )
 
         with (
             patch(
@@ -3879,9 +3798,7 @@ class TestResolveDdServiceName:
             ),
             patch(
                 "vaig.tools.gke._resources._list_resource",
-                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
-                    deploys if res == "deployments" else _FakeListResult([])
-                ),
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: deploys if res == "deployments" else _FakeListResult([]),
             ),
         ):
             result = ServiceHealthSkill._resolve_dd_service_name(
@@ -3898,28 +3815,26 @@ class TestResolveDdServiceName:
 
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
-        deploys = _FakeListResult([
-            _FakeItem(
-                metadata=_FakeMeta(name="payment-api"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "payment-svc"}
+        deploys = _FakeListResult(
+            [
+                _FakeItem(
+                    metadata=_FakeMeta(name="payment-api"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "payment-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-            _FakeItem(
-                metadata=_FakeMeta(name="order-api"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "order-svc"}
+                _FakeItem(
+                    metadata=_FakeMeta(name="order-api"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "order-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-        ])
+            ]
+        )
 
         with (
             patch(
@@ -3928,9 +3843,7 @@ class TestResolveDdServiceName:
             ),
             patch(
                 "vaig.tools.gke._resources._list_resource",
-                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
-                    deploys if res == "deployments" else _FakeListResult([])
-                ),
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: deploys if res == "deployments" else _FakeListResult([]),
             ),
         ):
             result = ServiceHealthSkill._resolve_dd_service_name(
@@ -3947,28 +3860,26 @@ class TestResolveDdServiceName:
 
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
-        deploys = _FakeListResult([
-            _FakeItem(
-                metadata=_FakeMeta(name="frontend"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "frontend-svc"}
+        deploys = _FakeListResult(
+            [
+                _FakeItem(
+                    metadata=_FakeMeta(name="frontend"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "frontend-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-            _FakeItem(
-                metadata=_FakeMeta(name="backend"),
-                spec=_FakeSpec(
-                    template=_FakePodTemplateSpec(
-                        metadata=_FakePodTemplateMeta(
-                            labels={"tags.datadoghq.com/service": "backend-svc"}
+                _FakeItem(
+                    metadata=_FakeMeta(name="backend"),
+                    spec=_FakeSpec(
+                        template=_FakePodTemplateSpec(
+                            metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "backend-svc"})
                         )
-                    )
+                    ),
                 ),
-            ),
-        ])
+            ]
+        )
 
         with (
             patch(
@@ -3977,9 +3888,7 @@ class TestResolveDdServiceName:
             ),
             patch(
                 "vaig.tools.gke._resources._list_resource",
-                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
-                    deploys if res == "deployments" else _FakeListResult([])
-                ),
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: deploys if res == "deployments" else _FakeListResult([]),
             ),
         ):
             result = ServiceHealthSkill._resolve_dd_service_name(
@@ -4045,9 +3954,7 @@ class TestResolveDdServiceName:
             ),
             spec=_FakeSpec(
                 template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(
-                        labels={"tags.datadoghq.com/service": "wrong-svc"}
-                    )
+                    metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "wrong-svc"})
                 )
             ),
         )
@@ -4060,9 +3967,7 @@ class TestResolveDdServiceName:
             ),
             spec=_FakeSpec(
                 template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(
-                        labels={"tags.datadoghq.com/service": "canary-svc"}
-                    )
+                    metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "canary-svc"})
                 )
             ),
         )
@@ -4104,18 +4009,18 @@ class TestResolveDdServiceName:
             if res == "deployments":
                 raise ConnectionError("API unreachable")
             if res == "statefulsets":
-                return _FakeListResult([
-                    _FakeItem(
-                        metadata=_FakeMeta(name="db-sts"),
-                        spec=_FakeSpec(
-                            template=_FakePodTemplateSpec(
-                                metadata=_FakePodTemplateMeta(
-                                    labels={"tags.datadoghq.com/service": "db-svc"}
+                return _FakeListResult(
+                    [
+                        _FakeItem(
+                            metadata=_FakeMeta(name="db-sts"),
+                            spec=_FakeSpec(
+                                template=_FakePodTemplateSpec(
+                                    metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/service": "db-svc"})
                                 )
-                            )
-                        ),
-                    )
-                ])
+                            ),
+                        )
+                    ]
+                )
             return _FakeListResult([])
 
         with (
@@ -4149,9 +4054,7 @@ class TestExtractDdEnv:
             metadata=_FakeMeta(name="api", labels={"tags.datadoghq.com/env": "staging"}),
             spec=_FakeSpec(
                 template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(
-                        labels={"tags.datadoghq.com/env": "production"}
-                    )
+                    metadata=_FakePodTemplateMeta(labels={"tags.datadoghq.com/env": "production"})
                 )
             ),
         )
@@ -4163,11 +4066,7 @@ class TestExtractDdEnv:
 
         item = _FakeItem(
             metadata=_FakeMeta(name="api", labels={"tags.datadoghq.com/env": "staging"}),
-            spec=_FakeSpec(
-                template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(labels={})
-                )
-            ),
+            spec=_FakeSpec(template=_FakePodTemplateSpec(metadata=_FakePodTemplateMeta(labels={}))),
         )
         assert _extract_dd_env(item) == "staging"
 
@@ -4177,11 +4076,7 @@ class TestExtractDdEnv:
 
         item = _FakeItem(
             metadata=_FakeMeta(name="api"),
-            spec=_FakeSpec(
-                template=_FakePodTemplateSpec(
-                    metadata=_FakePodTemplateMeta(labels={"app": "my-app"})
-                )
-            ),
+            spec=_FakeSpec(template=_FakePodTemplateSpec(metadata=_FakePodTemplateMeta(labels={"app": "my-app"}))),
         )
         assert _extract_dd_env(item) == ""
 

@@ -68,7 +68,7 @@ class AlertTuningSkill(BaseSkill):
                     "interruptions). Classify each alert health as HEALTHY, NOISY, DEAD, "
                     "STUCK, ORPHANED, or DUPLICATE."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "coverage_assessor",
@@ -87,12 +87,12 @@ class AlertTuningSkill(BaseSkill):
                     "(Request rate, Error rate, Duration for services). Identify services "
                     "lacking proper observability dashboards."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "observability_lead",
                 "role": "Observability Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

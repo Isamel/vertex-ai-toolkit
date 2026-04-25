@@ -51,7 +51,7 @@ class PostmortemSkill(BaseSkill):
                     "response time, escalation points, mitigation actions, and resolution "
                     "confirmation. Calculate TTD, TTM, and TTR metrics."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "impact_assessor",
@@ -64,12 +64,12 @@ class PostmortemSkill(BaseSkill):
                     "available metrics to provide precise numbers, and clearly state when "
                     "estimates are used vs confirmed data."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "postmortem_author",
                 "role": "Postmortem Author",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

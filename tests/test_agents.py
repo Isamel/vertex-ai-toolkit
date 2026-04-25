@@ -133,7 +133,22 @@ class TestSpecialistAgentFromConfigDict:
             "system_instruction": "Help.",
         }
         agent = SpecialistAgent.from_config_dict(config, mock_client)
-        assert agent.model == "gemini-2.5-pro"
+        # Default is sentinel "" — stored in _config.model.
+        # agent.model falls back to client.current_model when sentinel is set,
+        # so we assert on the raw config field to verify the sentinel is stored.
+        assert agent._config.model == ""
+
+    def test_sentinel_empty_string_passes_through(self) -> None:
+        """Sentinel '' is stored as-is; resolution is the orchestrator's responsibility."""
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "helper",
+            "system_instruction": "Help.",
+            "model": "",
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent._config.model == ""
 
     def test_raises_type_error_on_list_input(self) -> None:
         """The .get() AttributeError bug — if a list is passed instead of a dict."""
@@ -359,3 +374,110 @@ class TestSpecialistAgentSchemaForwarding:
         call_kwargs = agent._client.async_generate.call_args
         assert "response_schema" not in call_kwargs.kwargs
         assert "response_mime_type" not in call_kwargs.kwargs
+
+
+# ── Sentinel model resolution via Orchestrator ────────────────
+
+
+class TestOrchestratorSentinelResolution:
+    """Verify that sentinel '' in agent configs resolves to Settings-driven model names.
+
+    These tests exercise the full path:
+      skill.get_agents_config() → orchestrator.create_agents_for_skill()
+      → agent.model == settings.agents.specialist_model
+    """
+
+    def _make_orchestrator(self, specialist_model: str = "gemini-2.5-flash") -> object:
+        from vaig.agents.orchestrator import Orchestrator
+        from vaig.core.config import Settings
+
+        client = MagicMock()
+        settings = Settings()
+        settings.agents.specialist_model = specialist_model
+        settings.agents.orchestrator_model = "gemini-2.5-pro"
+        return Orchestrator(client, settings)
+
+    def _make_sentinel_skill(self, *, requires_tools: bool = False) -> object:
+        """Return a minimal BaseSkill stub whose agent configs use sentinel ''."""
+        from vaig.skills.base import BaseSkill
+
+        class _SentinelSkill(BaseSkill):
+            def get_agents_config(self) -> list[dict]:
+                return [
+                    {
+                        "name": "analyst",
+                        "role": "analyst",
+                        "system_instruction": "Analyze.",
+                        "model": "",
+                        "requires_tools": requires_tools,
+                    }
+                ]
+
+            async def execute(self, *a, **kw):  # type: ignore[override]
+                pass
+
+            def get_metadata(self):  # type: ignore[override]
+                from vaig.skills.base import SkillMetadata
+
+                return SkillMetadata(name="sentinel-skill", description="stub")
+
+            def get_system_instruction(self) -> str:
+                return "stub"
+
+            def get_phase_prompt(self, phase, context, user_input) -> str:  # type: ignore[override]
+                return "stub"
+
+        return _SentinelSkill()
+
+    def test_specialist_agent_sentinel_resolves_to_specialist_model(self) -> None:
+        """SpecialistAgent created from sentinel '' uses settings.agents.specialist_model."""
+        orch = self._make_orchestrator(specialist_model="gemini-2.5-flash")
+        skill = self._make_sentinel_skill(requires_tools=False)
+        agents = orch.create_agents_for_skill(skill)  # type: ignore[arg-type]
+        assert len(agents) == 1
+        assert agents[0].model == "gemini-2.5-flash"
+
+    def test_specialist_agent_sentinel_reflects_custom_settings(self) -> None:
+        """Resolution uses the actual Settings value, not a hardcoded string."""
+        orch = self._make_orchestrator(specialist_model="gemini-2.0-flash")
+        skill = self._make_sentinel_skill(requires_tools=False)
+        agents = orch.create_agents_for_skill(skill)  # type: ignore[arg-type]
+        assert agents[0].model == "gemini-2.0-flash"
+
+    def test_explicit_model_in_config_is_not_overridden(self) -> None:
+        """An explicit non-empty model in the skill config must be honoured."""
+        from vaig.agents.orchestrator import Orchestrator
+        from vaig.core.config import Settings
+        from vaig.skills.base import BaseSkill
+
+        class _ExplicitModelSkill(BaseSkill):
+            def get_agents_config(self) -> list[dict]:
+                return [
+                    {
+                        "name": "analyst",
+                        "role": "analyst",
+                        "system_instruction": "Analyze.",
+                        "model": "gemini-2.5-pro",
+                    }
+                ]
+
+            async def execute(self, *a, **kw):  # type: ignore[override]
+                pass
+
+            def get_metadata(self):  # type: ignore[override]
+                from vaig.skills.base import SkillMetadata
+
+                return SkillMetadata(name="explicit-skill", description="stub")
+
+            def get_system_instruction(self) -> str:
+                return "stub"
+
+            def get_phase_prompt(self, phase, context, user_input) -> str:  # type: ignore[override]
+                return "stub"
+
+        client = MagicMock()
+        settings = Settings()
+        settings.agents.specialist_model = "gemini-2.5-flash"
+        orch = Orchestrator(client, settings)
+        agents = orch.create_agents_for_skill(_ExplicitModelSkill())  # type: ignore[arg-type]
+        assert agents[0].model == "gemini-2.5-pro"

@@ -38,18 +38,18 @@ class ToolCallRecord:
 
     tool_name: str
     tool_args: dict[str, Any]
-    output: str                    # Full, untruncated output
-    output_size_bytes: int         # len(output.encode('utf-8'))
+    output: str  # Full, untruncated output
+    output_size_bytes: int  # len(output.encode('utf-8'))
     error: bool
-    error_type: str                # Exception class name, empty if no error
-    error_message: str             # Error details, empty if no error
-    duration_s: float              # Wall clock seconds
-    timestamp: str                 # ISO 8601 UTC
-    agent_name: str                # Which agent made the call (gatherer, analyzer, etc.)
-    run_id: str                    # UUID for the execution run
-    iteration: int                 # Which iteration of the tool loop
-    cached: bool = False           # True when result came from ToolResultCache
-    redactions: int = 0            # Number of sensitive values redacted from output
+    error_type: str  # Exception class name, empty if no error
+    error_message: str  # Error details, empty if no error
+    duration_s: float  # Wall clock seconds
+    timestamp: str  # ISO 8601 UTC
+    agent_name: str  # Which agent made the call (gatherer, analyzer, etc.)
+    run_id: str  # UUID for the execution run
+    iteration: int  # Which iteration of the tool loop
+    cached: bool = False  # True when result came from ToolResultCache
+    redactions: int = 0  # Number of sensitive values redacted from output
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON storage."""
@@ -135,6 +135,11 @@ class ToolRegistry:
         A tool is included when ``tool.categories & categories`` is non-empty —
         i.e. the tool belongs to at least one of the requested categories.
 
+        Unlike :meth:`register`, this method assigns tools directly without
+        emitting per-tool DEBUG logs (which would fire once per agent that
+        receives a filtered copy of the registry).  A single summary log line
+        is emitted instead.
+
         Args:
             categories: The set of category names to keep.  Use constants from
                 :mod:`vaig.tools.categories` (e.g.
@@ -147,7 +152,13 @@ class ToolRegistry:
         filtered = ToolRegistry()
         for tool in self._tools.values():
             if tool.categories & categories:
-                filtered.register(tool)
+                filtered._tools[tool.name] = tool  # direct assign — avoids per-tool log noise
+        logger.debug(
+            "Filtered tool registry: %d/%d tools for categories=%s",
+            len(filtered._tools),
+            len(self._tools),
+            sorted(categories),
+        )
         return filtered
 
     def to_function_declarations(self) -> list[types.FunctionDeclaration]:
@@ -157,10 +168,7 @@ class ToolRegistry:
             params = tool.parameters or []
             schema: dict[str, Any] = {
                 "type": "object",
-                "properties": {
-                    param.name: {"type": param.type, "description": param.description}
-                    for param in params
-                },
+                "properties": {param.name: {"type": param.type, "description": param.description} for param in params},
                 "required": [p.name for p in params if p.required],
             }
             declarations.append(

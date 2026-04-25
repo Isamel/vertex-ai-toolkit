@@ -52,7 +52,7 @@ class APIDesignSkill(BaseSkill):
                     "versioning strategy. You are deeply familiar with Google API Design "
                     "Guide, Microsoft REST API Guidelines, and Zalando RESTful API Guidelines."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "security_reviewer",
@@ -64,12 +64,12 @@ class APIDesignSkill(BaseSkill):
                     "Top 10 vulnerabilities. You evaluate OAuth 2.0 flows, JWT handling, "
                     "scope definitions, CORS policies, and sensitive data in responses."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "api_design_lead",
                 "role": "API Design Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

@@ -69,7 +69,7 @@ class NetworkReviewSkill(BaseSkill):
                     "Evaluate VPN and peering security — site-to-site VPN configurations, "
                     "transit gateway architectures, and private connectivity to cloud services."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "topology_analyzer",
@@ -88,12 +88,12 @@ class NetworkReviewSkill(BaseSkill):
                     "mode, traffic policy correctness (timeouts, retries, circuit breakers), "
                     "traffic splitting configurations, and control plane security."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "network_lead",
                 "role": "Network Review Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

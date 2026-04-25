@@ -516,7 +516,7 @@ class CodeMigrationSkill(BaseSkill):
                     "Produce structured tables and complexity ratings. "
                     "Be precise — your inventory drives the entire migration pipeline."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "requires_tools": True,
                 "tool_categories": ["coding"],
             },
@@ -532,7 +532,7 @@ class CodeMigrationSkill(BaseSkill):
                     "If you cannot complete a section, STOP and report what is missing. "
                     "Use the provided file tools to read source files and verify output."
                 ),
-                "model": "gemini-2.5-pro",
+                "model": "",
                 "requires_tools": True,
                 "tool_categories": ["coding"],
             },
@@ -553,7 +553,7 @@ class CodeMigrationSkill(BaseSkill):
                     "is accepted or sent back for rework. "
                     "Use the provided file tools to scan migrated output before reporting."
                 ),
-                "model": "gemini-2.5-pro",
+                "model": "",
                 "requires_tools": True,
                 "tool_categories": ["coding"],
             },

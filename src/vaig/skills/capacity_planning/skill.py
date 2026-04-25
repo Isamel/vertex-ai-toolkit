@@ -56,12 +56,12 @@ class CapacityPlanningSkill(BaseSkill):
                     "infrastructure utilization, and identifying current utilization hotspots "
                     "that are approaching saturation thresholds."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "capacity_modeler",
                 "role": "Capacity Modeler",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

@@ -70,7 +70,7 @@ class ResilienceReviewSkill(BaseSkill):
                     "redundancy (replicas, multi-zone), and auto-scaling responsiveness. "
                     "Rate mitigation status as: Absent, Partial, Adequate, or Verified."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "experiment_designer",
@@ -91,12 +91,12 @@ class ResilienceReviewSkill(BaseSkill):
                     "AWS FIS, tc/iptables). Design experiments from simplest to most complex, "
                     "starting in staging and graduating to production with containment."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "resilience_lead",
                 "role": "Resilience Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

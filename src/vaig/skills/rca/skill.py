@@ -48,7 +48,7 @@ class RCASkill(BaseSkill):
                 "role": "RCA Data Gatherer",
                 "requires_tools": True,
                 "system_instruction": RCA_GATHERER_PROMPT,
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "temperature": 0.0,
                 "max_iterations": 10,
             },
@@ -61,7 +61,7 @@ class RCASkill(BaseSkill):
                     "log entries across multiple services. Focus on: error messages, stack traces, "
                     "request IDs, correlation IDs, and timing anomalies."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "metric_correlator",
@@ -72,12 +72,12 @@ class RCASkill(BaseSkill):
                     "anomalies, correlations, and trends. Use statistical reasoning to determine "
                     "which metric changes are significant vs noise."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "rca_lead",
                 "role": "RCA Lead Investigator",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

@@ -68,7 +68,7 @@ class ThreatModelSkill(BaseSkill):
                     "mechanisms per entry point. Identify external dependencies and their "
                     "trust level. Produce a comprehensive attack surface inventory."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "threat_enumerator",
@@ -85,12 +85,12 @@ class ThreatModelSkill(BaseSkill):
                     "Identify attack chains where multiple medium-risk threats combine into "
                     "high-impact sequences. Assign unique threat IDs (TM-XXXX) for tracking."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "threat_model_lead",
                 "role": "Threat Model Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

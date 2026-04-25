@@ -61,7 +61,7 @@ class CodeReviewSkill(BaseSkill):
                     "duplication, error handling strategy, and documentation coverage. "
                     "Flag both over-engineering and under-abstraction with equal rigor."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "security_auditor",
@@ -74,12 +74,12 @@ class CodeReviewSkill(BaseSkill):
                     "dependency usage, and OWASP Top 10 violations. Assess each finding "
                     "with an attack vector description and concrete remediation steps."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "review_lead",
                 "role": "Senior Review Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

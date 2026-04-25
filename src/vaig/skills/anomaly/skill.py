@@ -42,12 +42,12 @@ class AnomalySkill(BaseSkill):
                     "that are directly observable in the provided data. "
                     "If insufficient data is provided, state that explicitly."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "anomaly_detector",
                 "role": "Anomaly Detector",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

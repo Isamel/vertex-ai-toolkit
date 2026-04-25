@@ -67,12 +67,12 @@ class IncidentCommsSkill(BaseSkill):
                     "(percentage of requests affected, number of users impacted, regions affected). "
                     "Never speculate about root cause until confirmed."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "comms_coordinator",
                 "role": "Communications Coordinator",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

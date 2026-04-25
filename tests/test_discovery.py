@@ -213,7 +213,9 @@ class TestDiscoverySkillAgentsConfig:
         skill = DiscoverySkill()
         agents = skill.get_agents_config()
         for agent in agents:
-            assert agent["model"] == "gemini-2.5-flash"
+            # Models are sentinel "" — resolved at runtime via Settings.
+            # Skills must not hardcode a model name.
+            assert agent["model"] == ""
 
     def test_inventory_scanner_requires_tools(self) -> None:
         from vaig.skills.discovery.skill import DiscoverySkill

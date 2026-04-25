@@ -67,12 +67,12 @@ class ToilAnalysisSkill(BaseSkill):
                     "certificate management, and reporting. Calculate the toil budget percentage "
                     "per team and flag any exceeding the 50% threshold."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "automation_planner",
                 "role": "Automation Planner",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

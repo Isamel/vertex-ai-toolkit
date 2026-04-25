@@ -69,12 +69,12 @@ class ChangeRiskSkill(BaseSkill):
                     "feature flag toggle, quickly rolled back via redeployment, or does it "
                     "require complex rollback with data reconciliation?"
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "risk_scorer",
                 "role": "Risk Scorer & Deployment Planner",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

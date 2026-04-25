@@ -51,12 +51,12 @@ class CostAnalysisSkill(BaseSkill):
                     "databases, and resources with zero or near-zero traffic. Quantify every "
                     "finding with estimated monthly cost and potential savings."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "cost_optimizer",
                 "role": "Cost Optimizer",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

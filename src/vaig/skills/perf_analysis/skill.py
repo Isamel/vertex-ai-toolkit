@@ -60,7 +60,7 @@ class PerfAnalysisSkill(BaseSkill):
                 "role": "Performance Data Gatherer",
                 "requires_tools": True,
                 "system_instruction": PERF_ANALYSIS_GATHERER_PROMPT,
-                "model": "gemini-2.5-flash",
+                "model": "",
                 "temperature": 0.0,
                 "max_iterations": 10,
             },
@@ -79,7 +79,7 @@ class PerfAnalysisSkill(BaseSkill):
                     "contributors and tail latency amplification in fan-out architectures. "
                     "Detect coordinated omission in benchmark traces."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "resource_profiler",
@@ -96,12 +96,12 @@ class PerfAnalysisSkill(BaseSkill):
                     "Assess I/O wait patterns — synchronous I/O in async contexts, excessive "
                     "disk access, network round-trip overhead, and connection pool exhaustion."
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "",
             },
             {
                 "name": "performance_lead",
                 "role": "Performance Analysis Lead",
                 "system_instruction": SYSTEM_INSTRUCTION,
-                "model": "gemini-2.5-pro",
+                "model": "",
             },
         ]

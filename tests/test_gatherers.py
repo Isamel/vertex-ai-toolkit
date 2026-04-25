@@ -176,7 +176,9 @@ def test_gatherer_model_is_flash(
     pipeline_len: int,
 ) -> None:
     gatherer = _get_gatherer(skill_module, skill_class, gatherer_name)
-    assert gatherer.get("model") == "gemini-2.5-flash"
+    # Gatherer model must be sentinel "" — resolved at runtime via Settings.
+    # Skills must not hardcode a model name.
+    assert gatherer.get("model") == ""
 
 
 @pytest.mark.parametrize(

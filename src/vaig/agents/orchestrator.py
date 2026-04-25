@@ -460,7 +460,10 @@ class Orchestrator:
 
         for config_dict in configs:
             if config_dict.get("requires_tools") and tool_registry is not None:
-                model = config_dict.get("model", "gemini-2.5-pro")
+                # Resolve sentinel "" to the settings-driven specialist model.
+                # Skills emit "" as a sentinel meaning "use default from Settings".
+                _raw_model = config_dict.get("model", "")
+                model = _raw_model or self._settings.agents.specialist_model
 
                 # ── Category filtering (optional) ──────────────────────────
                 # When the agent config declares ``tool_categories``, narrow the
@@ -520,7 +523,12 @@ class Orchestrator:
                     agent.model,
                 )
             else:
-                agent = SpecialistAgent.from_config_dict(config_dict, self._client)
+                # Resolve sentinel "" to the settings-driven specialist model
+                # before handing the dict to the factory.
+                resolved_config = config_dict
+                if not config_dict.get("model"):
+                    resolved_config = {**config_dict, "model": self._settings.agents.specialist_model}
+                agent = SpecialistAgent.from_config_dict(resolved_config, self._client)
                 logger.info(
                     "Created SpecialistAgent: %s (role=%s, model=%s)",
                     agent.name,
