@@ -1286,16 +1286,25 @@ AND resource.labels.namespace_name="{safe_ns}"
 Recommended params: ``interval_hours=0.25``, ``limit=50``
 
 ### Step 7c — Envoy Upstream Errors — Query C (ALWAYS execute)
-You MUST call ``gcloud_logging_query`` to surface upstream connection failures:
+You MUST call ``gcloud_logging_query`` to surface upstream connection failures.
+
+**Note**: Istio access logs are structured JSON — when querying ``container_name="istio-proxy"``,
+prefer ``jsonPayload`` fields over ``textPayload`` regex where possible.
+
+Use a combined OR filter to catch both structured JSON logs and plain-text logs:
 
 ```
 severity>=WARNING AND resource.type="k8s_container"
 AND resource.labels.container_name="istio-proxy"
-AND textPayload=~"upstream connect error"
 AND resource.labels.namespace_name="{safe_ns}"
+AND (jsonPayload.message:"upstream" OR textPayload=~"upstream connect error")
 ```
 
 Recommended params: ``interval_hours=1.0``, ``limit=30``
+
+**After Step 7c**: If results are found, extract the ``upstream_cluster`` field from
+``jsonPayload`` — this identifies which backend service is failing. Format it in your
+findings as: ``upstream_cluster: <value>``
 
 ### Step 7d — Istiod Discovery Logs — Query D (ALWAYS execute)
 You MUST call ``gcloud_logging_query`` for control-plane discovery errors.
@@ -1371,8 +1380,9 @@ If no errors found: "No ERROR-level logs found for <namespace> in the last 1 hou
 (List each unique Envoy error pattern: timestamp, message.
 If no errors found: "No Envoy access errors found.")
 
-### Step 7c Results — Envoy Upstream Errors (upstream connect error)
-(List upstream connect error patterns found, or "Not found.")
+### Step 7c Results — Envoy Upstream Errors (upstream connect error / jsonPayload.message upstream)
+(List upstream connect error patterns found, or "Not found."
+If found, include ``upstream_cluster: <value>`` extracted from ``jsonPayload`` for each entry.)
 
 ### Step 7d Results — Istiod Discovery Logs (discovery, severity>=WARNING)
 (List relevant entries — flag ONLY items referencing the target service/namespace.
