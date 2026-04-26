@@ -37,6 +37,13 @@ def _point_value(point: Any) -> float | None:
     except (IndexError, TypeError, KeyError, ValueError):
         return None
 
+
+# ── Auto-detected cluster name cache ─────────────────────────
+# None  = not yet probed
+# ""    = probed but not found
+# str   = cluster name detected from DaemonSet env vars / labels
+_detected_cluster_name: str | None = None
+
 # ── Error messages ───────────────────────────────────────────
 _ERR_NOT_INSTALLED = "datadog-api-client not installed. Install with: pip install 'vaig[live]'"
 _ERR_NOT_ENABLED = "Datadog API integration is disabled. Set datadog.enabled=true in config."
@@ -44,23 +51,46 @@ _ERR_AUTH = "Authentication failed. Check your Datadog API key and application k
 _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scopes."
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
+
+def _probe_daemonset_cluster_name(apps_v1: Any) -> str:  # noqa: ANN401
+    """Probe the Datadog DaemonSet once and cache the result in ``_detected_cluster_name``.
+
+    Returns the detected cluster name (may be ``""`` if not found).
+    Uses a module-level cache so this expensive probe only runs once per process.
+    """
+    global _detected_cluster_name  # noqa: PLW0603
+
+    if _detected_cluster_name is not None:
+        return _detected_cluster_name
+
+    try:
+        from vaig.tools.gke.datadog import _check_datadog_agent  # noqa: WPS433
+
+        result = _check_datadog_agent(apps_v1)
+        _detected_cluster_name = result.get("cluster_name", "")
+    except Exception:  # noqa: BLE001
+        _detected_cluster_name = ""
+
+    return _detected_cluster_name
+
+
 # ── Datadog APM operation probe order ────────────────────────
 # Ordered by prevalence: Istio/Envoy (newest then legacy) → Java/Spring →
 # gRPC → Ruby → Node/Express → Python → .NET → generic HTTP (catch-all).
 # envoy.proxy MUST remain at position #1 (primary istio-ingressgateway pattern).
 _APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
-    "envoy.proxy",       # Istio/Envoy sidecar + ingressgateway (keep #1)
-    "envoy.envoy",       # Older Envoy span naming (stale-cache scenario)
-    "servlet.request",   # Java/Spring/Tomcat
-    "grpc.server",       # gRPC server-side
-    "grpc.client",       # gRPC client-side
-    "rack.request",      # Ruby on Rails
-    "express.request",   # Node/Express
-    "django.request",    # Python/Django
-    "flask.request",     # Python/Flask
-    "fastapi.request",   # Python/FastAPI
-    "aspnet.request",    # .NET
-    "http.request",      # generic HTTP (last-resort catch-all)
+    "envoy.proxy",  # Istio/Envoy sidecar + ingressgateway (keep #1)
+    "envoy.envoy",  # Older Envoy span naming (stale-cache scenario)
+    "servlet.request",  # Java/Spring/Tomcat
+    "grpc.server",  # gRPC server-side
+    "grpc.client",  # gRPC client-side
+    "rack.request",  # Ruby on Rails
+    "express.request",  # Node/Express
+    "django.request",  # Python/Django
+    "flask.request",  # Python/Flask
+    "fastapi.request",  # Python/FastAPI
+    "aspnet.request",  # .NET
+    "http.request",  # generic HTTP (last-resort catch-all)
 )
 
 # ── Metric name aliases (fuzzy matching) ─────────────────────
@@ -131,9 +161,13 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
         "errors": "sum:trace." + _op + ".errors{{{filters}}} by " + _by,
         "latency": "avg:trace." + _op + ".duration{{{filters}}} by " + _by,
         "error_rate": (
-            "( sum:trace." + _op + ".errors{{{filters}}} by "
+            "( sum:trace."
+            + _op
+            + ".errors{{{filters}}} by "
             + _by
-            + " / sum:trace." + _op + ".hits{{{filters}}} by "
+            + " / sum:trace."
+            + _op
+            + ".hits{{{filters}}} by "
             + _by
             + " ) * 100"
         ),
@@ -329,7 +363,8 @@ def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
         # deliberately disabled — avoids noisy warnings for expected configs
         # (e.g. self-signed certs behind corporate proxy).
         warnings.filterwarnings(
-            "ignore", category=urllib3.exceptions.InsecureRequestWarning,
+            "ignore",
+            category=urllib3.exceptions.InsecureRequestWarning,
         )
     elif isinstance(config.ssl_verify, str):
         configuration.verify_ssl = True
@@ -366,9 +401,7 @@ def _ssl_error_result(context: str, exc: Exception) -> ToolResult:
 
 # ── APM Discovery Helpers ────────────────────────────────────
 
-_APM_OP_FROM_METRIC_RE: re.Pattern[str] = re.compile(
-    r"^trace\.([^.]+(?:\.[^.]+)?)\.hits$"
-)
+_APM_OP_FROM_METRIC_RE: re.Pattern[str] = re.compile(r"^trace\.([^.]+(?:\.[^.]+)?)\.hits$")
 
 
 def _dd_raw_get(
@@ -416,9 +449,7 @@ def _dd_raw_get(
             return {}
         if hasattr(resp, "data"):
             raw_data = resp.data
-            data = _json.loads(
-                raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data
-            )
+            data = _json.loads(raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data)
         else:
             data = {}
         return data if isinstance(data, dict) else {}
@@ -504,7 +535,9 @@ def _detect_apm_operation(
             _cache._set_cache(cache_key, discovered, ttl=300)
             logger.info(
                 "Datadog APM: discovered operation '%s' for service=%s env=%s",
-                discovered, service, env,
+                discovered,
+                service,
+                env,
             )
             return discovered, "discovery"
 
@@ -524,19 +557,26 @@ def _detect_apm_operation(
                 _cache._set_cache(cache_key, op, ttl=300)
                 logger.info(
                     "Datadog APM: detected operation '%s' for service=%s env=%s",
-                    op, service, env,
+                    op,
+                    service,
+                    env,
                 )
                 return op, "probe"
         except (urllib3.exceptions.MaxRetryError, OSError):
             logger.debug(
                 "Datadog APM: probe for '%s' failed for service=%s env=%s",
-                op, service, env, exc_info=True,
+                op,
+                service,
+                env,
+                exc_info=True,
             )
             continue
 
     logger.warning(
         "Datadog APM: no operation found for service=%s env=%s (probed: %s)",
-        service, env, ", ".join(_APM_OPERATION_PROBE_ORDER),
+        service,
+        env,
+        ", ".join(_APM_OPERATION_PROBE_ORDER),
     )
     return None, "none"
 
@@ -598,7 +638,8 @@ def query_datadog_metrics(
 
     # Apply cluster_name_override when set — allows the Datadog tag value to differ
     # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
-    effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
+    # Priority: 1) explicit override  2) auto-detected from DaemonSet  3) GKE cluster name
+    effective_cluster = getattr(config, "cluster_name_override", "") or (_detected_cluster_name or "") or cluster_name
 
     # Resolve metric mode — APM trace.* metrics do not carry custom tags
     mode = getattr(config, "metric_mode", "auto")
@@ -655,11 +696,13 @@ def query_datadog_metrics(
     # the retry path strips them on empty results).  Only trace.* metrics are
     # hard-blocked because their tag schema never includes user-defined labels.
     _include_custom_labels = _is_custom_metric or not _is_trace_metric
-    _had_custom_labels = _include_custom_labels and bool(
-        config.labels.custom if config is not None else False
-    )
+    _had_custom_labels = _include_custom_labels and bool(config.labels.custom if config is not None else False)
     filters, tag_err = _build_tag_filter(
-        effective_cluster, service, env, config, include_custom_labels=_include_custom_labels,
+        effective_cluster,
+        service,
+        env,
+        config,
+        include_custom_labels=_include_custom_labels,
     )
     if tag_err is not None:
         return tag_err
@@ -700,8 +743,7 @@ def query_datadog_metrics(
                 "  - If APM-only setup: set metric_mode='apm' or 'auto' in config",
                 "",
                 "Next step:",
-                "  Run diagnose_datadog_metrics(config=config) to inspect available "
-                "tags and validate label config.",
+                "  Run diagnose_datadog_metrics(config=config) to inspect available tags and validate label config.",
             ]
             return (
                 ToolResult(output="\n".join(diag_lines), error=False),
@@ -753,13 +795,17 @@ def query_datadog_metrics(
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "APM operation auto-detection failed for service=%s env=%s: %s",
-                    service, env, exc,
+                    service,
+                    env,
+                    exc,
                 )
                 detected = None
             if detected and detected != resolved_operation:
                 logger.debug(
                     "APM operation auto-detected: '%s' for service=%s env=%s",
-                    detected, service, env,
+                    detected,
+                    service,
+                    env,
                 )
                 resolved_operation = detected
                 metric_templates = _build_metric_templates(config, operation=resolved_operation)
@@ -774,7 +820,11 @@ def query_datadog_metrics(
         # and custom labels were included in the original filter.
         if not has_data and _had_custom_labels:
             fallback_filters, fb_err = _build_tag_filter(
-                effective_cluster, service, env, config, include_custom_labels=False,
+                effective_cluster,
+                service,
+                env,
+                config,
+                include_custom_labels=False,
             )
             if fb_err is None:
                 fallback_query = template_str.format(filters=fallback_filters)
@@ -801,13 +851,16 @@ def query_datadog_metrics(
                         detected, _det_source = _detect_apm_operation(api, service, env, config)
                     except Exception as exc:  # noqa: BLE001
                         logger.debug(
-                            "auto mode: APM operation detection failed: %s", exc,
+                            "auto mode: APM operation detection failed: %s",
+                            exc,
                         )
                         detected = None
                     if detected and detected != resolved_operation:
                         logger.debug(
                             "auto mode: APM operation auto-detected: '%s' for service=%s env=%s",
-                            detected, service, env,
+                            detected,
+                            service,
+                            env,
                         )
                         resolved_operation = detected
                         apm_only = _build_metric_templates(_fb_config, operation=resolved_operation)
@@ -815,14 +868,18 @@ def query_datadog_metrics(
 
                 # APM trace.* metrics don't carry custom labels — use minimal filter
                 apm_filters, apm_err = _build_tag_filter(
-                    effective_cluster, service, env, config, include_custom_labels=False,
+                    effective_cluster,
+                    service,
+                    env,
+                    config,
+                    include_custom_labels=False,
                 )
                 if apm_err is None:
                     apm_query = apm_template.format(filters=apm_filters)
                     logger.info(
-                        "auto mode: k8s_agent returned no data for '%s'; "
-                        "falling back to apm (operation=%s)",
-                        metric, resolved_operation,
+                        "auto mode: k8s_agent returned no data for '%s'; falling back to apm (operation=%s)",
+                        metric,
+                        resolved_operation,
                     )
                     result, has_data = _execute_query(api, apm_query)
                     if has_data:
@@ -1186,11 +1243,7 @@ def _run_apm_queries(
     # ── Cache invalidation + single-shot retry ────────────
     # If all 3 metric queries returned empty AND this is not already a retry,
     # the cached operation may be stale.  Invalidate it and re-run once.
-    all_empty = (
-        results.get("hits") is None
-        and results.get("errors") is None
-        and results.get("duration") is None
-    )
+    all_empty = results.get("hits") is None and results.get("errors") is None and results.get("duration") is None
     # Only invalidate when the op came from cache (not override, config, discovery, or probe).
     if all_empty and op_source == "cache" and not _retried:
         apm_op_cache_key = _cache._cache_key_discovery("apm_op", service_name, env)
@@ -1198,7 +1251,9 @@ def _run_apm_queries(
         logger.debug(
             "Datadog APM: all metrics empty for op=%s service=%s env=%s — "
             "invalidated cache, retrying operation detection",
-            operation, service_name, env,
+            operation,
+            service_name,
+            env,
         )
         return _run_apm_queries(
             api,
@@ -1331,9 +1386,7 @@ def get_datadog_apm_services(
 
     # Cache check (TTL = 60s) — key includes service+env+window in whole seconds
     cache_key_window = int(hours_back * 3600)
-    cache_key = _cache._cache_key_discovery(
-        "dd_apm_metrics", service_name, env, str(cache_key_window)
-    )
+    cache_key = _cache._cache_key_discovery("dd_apm_metrics", service_name, env, str(cache_key_window))
     cached = _cache._get_cached(cache_key)
     if cached is not None:
         return ToolResult(output=cached, error=False)
@@ -1350,13 +1403,29 @@ def get_datadog_apm_services(
     try:
         if _custom_api is not None:
             return _run_apm_queries(
-                _custom_api, service_name, env, tag_filter, start, now, hours_back, cache_key, config,
+                _custom_api,
+                service_name,
+                env,
+                tag_filter,
+                start,
+                now,
+                hours_back,
+                cache_key,
+                config,
             )
 
         with _get_dd_api_client(config) as client:
             api = MetricsApi(client)  # type: ignore[no-untyped-call]
             return _run_apm_queries(
-                api, service_name, env, tag_filter, start, now, hours_back, cache_key, config,
+                api,
+                service_name,
+                env,
+                tag_filter,
+                start,
+                now,
+                hours_back,
+                cache_key,
+                config,
             )
 
     except ApiException as exc:
@@ -1525,13 +1594,12 @@ def get_datadog_service_dependencies(
                 from datadog_api_client.v1.api.service_dependencies_api import (  # noqa: WPS433
                     ServiceDependenciesApi,
                 )
+
                 api = ServiceDependenciesApi(client)  # type: ignore[no-untyped-call]
             except ImportError:
                 # SDK class doesn't exist yet (v1 public beta) — fall back to
                 # raw HTTP via the client's rest_client.
-                logger.info(
-                    "ServiceDependenciesApi SDK class not available; using raw HTTP fallback."
-                )
+                logger.info("ServiceDependenciesApi SDK class not available; using raw HTTP fallback.")
                 rest = getattr(client, "rest_client", client)
                 url = f"https://api.{config.site}/api/v1/service_dependencies/{service_name}"
                 resp = rest.request("GET", url)
@@ -1687,8 +1755,7 @@ def diagnose_datadog_metrics(
 
         if has_k8s and has_trace:
             diagnostic["suggestions"].append(
-                "Both kubernetes.* and trace.* metrics found. "
-                "metric_mode='auto' or 'both' recommended."
+                "Both kubernetes.* and trace.* metrics found. metric_mode='auto' or 'both' recommended."
             )
         elif has_k8s and not has_trace:
             diagnostic["suggestions"].append(
@@ -1856,9 +1923,7 @@ def query_datadog_error_spans(
             f"Error spans for service={sanitized_service} env={sanitized_env} "
             f"({len(spans)} spans, grouped by endpoint | status | exception | upstream | count):"
         ]
-        for (route, status, exc_class, upstream), count in sorted(
-            groups.items(), key=lambda x: -x[1]
-        ):
+        for (route, status, exc_class, upstream), count in sorted(groups.items(), key=lambda x: -x[1]):
             lines.append(f"  {route} | {status} | {exc_class} | {upstream} | {count}")
         return ToolResult(output="\n".join(lines))
 
@@ -1897,6 +1962,7 @@ async_query_datadog_error_spans = to_async(query_datadog_error_spans)
 
 # ── Workload usage for cost pipeline (Layer 3) ───────────────
 
+
 def get_datadog_workload_usage(
     namespace: str,
     workload_names: list[str],
@@ -1930,8 +1996,11 @@ def get_datadog_workload_usage(
     if not _cfg.enabled:
         return {}
 
-    # Determine cluster tag value
-    cluster_tag = _cfg.cluster_name_override or getattr(gke_config, "cluster_name", "")
+    # Determine cluster tag value.
+    # Priority: 1) explicit override  2) auto-detected from DaemonSet  3) GKE cluster name
+    cluster_tag = (
+        _cfg.cluster_name_override or (_detected_cluster_name or "") or getattr(gke_config, "cluster_name", "")
+    )
 
     try:
         from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433
@@ -1945,12 +2014,10 @@ def get_datadog_workload_usage(
     start = now - 3600  # 1-hour window
 
     cpu_query = (
-        f"avg:kubernetes.cpu.usage.total"
-        f"{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
+        f"avg:kubernetes.cpu.usage.total{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
     )
     mem_query = (
-        f"avg:kubernetes.memory.rss"
-        f"{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
+        f"avg:kubernetes.memory.rss{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
     )
 
     def _avg_series(series: Any) -> dict[str, float]:
@@ -1963,7 +2030,7 @@ def get_datadog_workload_usage(
             for part in scope.split(","):
                 part = part.strip()
                 if part.startswith("pod_name:"):
-                    pod_name = part[len("pod_name:"):]
+                    pod_name = part[len("pod_name:") :]
                     break
             if not pod_name:
                 continue
