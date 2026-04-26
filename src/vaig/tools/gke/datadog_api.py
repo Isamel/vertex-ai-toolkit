@@ -38,12 +38,6 @@ def _point_value(point: Any) -> float | None:
         return None
 
 
-# ── Auto-detected cluster name cache ─────────────────────────
-# None  = not yet probed
-# ""    = probed but not found
-# str   = cluster name detected from DaemonSet env vars / labels
-_detected_cluster_name: str | None = None
-
 # ── Error messages ───────────────────────────────────────────
 _ERR_NOT_INSTALLED = "datadog-api-client not installed. Install with: pip install 'vaig[live]'"
 _ERR_NOT_ENABLED = "Datadog API integration is disabled. Set datadog.enabled=true in config."
@@ -53,25 +47,67 @@ _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
 
 def _probe_daemonset_cluster_name(apps_v1: Any) -> str:  # noqa: ANN401
-    """Probe the Datadog DaemonSet once and cache the result in ``_detected_cluster_name``.
+    """Read the Datadog cluster name from the agent DaemonSet (env vars then labels).
 
-    Returns the detected cluster name (may be ``""`` if not found).
-    Uses a module-level cache so this expensive probe only runs once per process.
+    Returns the detected cluster name, or ``""`` if not found or on any error.
+    Failed probes are NOT cached — a subsequent call with a valid client will
+    retry.  Successful probes are cached in ``_cache`` (keyed on ``apps_v1``
+    identity) to avoid repeat DaemonSet reads within the same session.
+
+    Note: env vars set via ``valueFrom`` (ConfigMap/Secret/fieldRef) cannot be
+    resolved here — only literal ``value`` fields are inspected.  If
+    ``valueFrom`` is in use, set ``datadog.cluster_name_override`` in config.
     """
-    global _detected_cluster_name  # noqa: PLW0603
-
-    if _detected_cluster_name is not None:
-        return _detected_cluster_name
+    cache_key = f"_dd_cluster_name:{id(apps_v1)}"
+    cached = _cache._get_cached(cache_key, ttl=3600)
+    if cached is not None:
+        return cached
 
     try:
         from vaig.tools.gke.datadog import _check_datadog_agent  # noqa: WPS433
 
         result = _check_datadog_agent(apps_v1)
-        _detected_cluster_name = result.get("cluster_name", "")
+        detected = result.get("cluster_name", "")
     except Exception:  # noqa: BLE001
-        _detected_cluster_name = ""
+        return ""  # do not cache failures — let next call retry
 
-    return _detected_cluster_name
+    if detected:
+        _cache._set_cache(cache_key, detected, ttl=3600)
+    return detected
+
+
+def _resolve_effective_cluster(
+    cluster_name: str,
+    config: DatadogAPIConfig,
+    gke_config: GKEConfig | None = None,
+) -> str:
+    """Return the Datadog cluster tag to use for metric queries.
+
+    Priority chain (first non-empty wins):
+    1. ``config.cluster_name_override`` — explicit user config
+    2. Auto-detected from Datadog agent DaemonSet env vars / labels
+    3. ``cluster_name`` — GKE cluster name passed by the caller
+
+    The DaemonSet probe is attempted only when ``gke_config`` is provided
+    and the Kubernetes client is available.  On any error the probe is
+    skipped silently and the chain falls through to the GKE name.
+    """
+    if override := getattr(config, "cluster_name_override", ""):
+        return override
+
+    if gke_config is not None:
+        try:
+            from vaig.tools.gke._clients import _create_k8s_clients  # noqa: WPS433
+
+            clients = _create_k8s_clients(gke_config)
+            if not isinstance(clients, ToolResult):
+                _, apps_v1, *_ = clients
+                if detected := _probe_daemonset_cluster_name(apps_v1):
+                    return detected
+        except Exception:  # noqa: BLE001
+            pass
+
+    return cluster_name
 
 
 # ── Datadog APM operation probe order ────────────────────────
@@ -590,6 +626,7 @@ def query_datadog_metrics(
     service: str | None = None,
     env: str | None = None,
     config: DatadogAPIConfig | None = None,
+    gke_config: GKEConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
     """Query Datadog metrics for a GKE cluster using the Metrics v1 API.
@@ -639,7 +676,7 @@ def query_datadog_metrics(
     # Apply cluster_name_override when set — allows the Datadog tag value to differ
     # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
     # Priority: 1) explicit override  2) auto-detected from DaemonSet  3) GKE cluster name
-    effective_cluster = getattr(config, "cluster_name_override", "") or (_detected_cluster_name or "") or cluster_name
+    effective_cluster = _resolve_effective_cluster(cluster_name, config, gke_config)
 
     # Resolve metric mode — APM trace.* metrics do not carry custom tags
     mode = getattr(config, "metric_mode", "auto")
@@ -1998,9 +2035,7 @@ def get_datadog_workload_usage(
 
     # Determine cluster tag value.
     # Priority: 1) explicit override  2) auto-detected from DaemonSet  3) GKE cluster name
-    cluster_tag = (
-        _cfg.cluster_name_override or (_detected_cluster_name or "") or getattr(gke_config, "cluster_name", "")
-    )
+    cluster_tag = _resolve_effective_cluster(getattr(gke_config, "cluster_name", ""), _cfg, gke_config)
 
     try:
         from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433

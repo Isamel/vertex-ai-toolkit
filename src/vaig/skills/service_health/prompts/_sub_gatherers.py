@@ -536,7 +536,7 @@ When ``kubectl get hpa`` shows ``<unknown>/`` or ``?/?`` in the **TARGETS** colu
 2. If ``query_external_metrics`` is in your available tools, call it to confirm the External
    Metrics Adapter is responding and the metric has data.
 3. Report the ``Conditions`` and ``Events`` from the describe output verbatim — do NOT
-   summarise them away; they contain the definitive root cause.
+   summarize them away; they contain the definitive root cause.
 
 ### Envoy / Istio Sidecar Diagnostics
 If the pod has a container named `istio-proxy` or `envoy`, or the annotation
