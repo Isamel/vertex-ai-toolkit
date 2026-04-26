@@ -151,24 +151,14 @@ def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
 
         if isinstance(exc, (PermissionDenied, Forbidden)):
             msg = getattr(exc, "message", str(exc))
-            return (
-                f"Permission denied querying {service}. "
-                f"Check IAM permissions. Error: {msg}"
-            )
+            return f"Permission denied querying {service}. Check IAM permissions. Error: {msg}"
         if isinstance(exc, ResourceExhausted):
             msg = getattr(exc, "message", str(exc))
-            return (
-                f"{service} API quota exceeded. "
-                f"Try reducing the limit or narrowing the filter. Error: {msg}"
-            )
+            return f"{service} API quota exceeded. Try reducing the limit or narrowing the filter. Error: {msg}"
         if isinstance(exc, ServiceUnavailable):
             msg = getattr(exc, "message", None) or str(exc)
             msg_lower = msg.lower()
-            if (
-                "serviceaccounts" in msg_lower
-                or "accesstoken" in msg_lower
-                or "token creator" in msg_lower
-            ):
+            if "serviceaccounts" in msg_lower or "accesstoken" in msg_lower or "token creator" in msg_lower:
                 return (
                     f"{service} returned 503 due to a Service Account "
                     f"impersonation issue. The caller likely lacks the "
@@ -179,10 +169,7 @@ def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
                     f'--role="roles/iam.serviceAccountTokenCreator"\n'
                     f"Error: {msg}"
                 )
-            return (
-                f"{service} is temporarily unavailable (503). "
-                f"Retry in a few moments. Error: {msg}"
-            )
+            return f"{service} is temporarily unavailable (503). Retry in a few moments. Error: {msg}"
         if isinstance(exc, (InvalidArgument, NotFound)):
             msg = getattr(exc, "message", str(exc))
             return f"Invalid request to {service}: {msg}"
@@ -251,12 +238,20 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
     if not time_series_list:
         return f"No time series data found for metric: {metric_type}"
 
+    # Cap series to avoid context window overflow (Istio metrics can return
+    # thousands of series — one per source/destination/method/path combination).
+    _MAX_SERIES = 20
+    total_series = len(time_series_list)
+    display_series = time_series_list[:_MAX_SERIES]
+
     lines: list[str] = []
     lines.append(f"Metric: {metric_type}")
-    lines.append(f"Series count: {len(time_series_list)}")
+    lines.append(
+        f"Series count: {total_series}" + (f" (showing first {_MAX_SERIES})" if total_series > _MAX_SERIES else "")
+    )
     lines.append("")
 
-    for idx, ts in enumerate(time_series_list):
+    for idx, ts in enumerate(display_series):
         # Extract labels — guard against None metric/resource objects
         metric_obj = getattr(ts, "metric", None)
         resource_obj = getattr(ts, "resource", None)
@@ -322,7 +317,24 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
 
         lines.append("")
 
-    return "\n".join(lines)
+    if total_series > _MAX_SERIES:
+        lines.append(
+            f"... and {total_series - _MAX_SERIES} more series omitted (cap={_MAX_SERIES}). Use aggregation= or a narrower filter_str to reduce cardinality."
+        )
+        lines.append("")
+
+    result = "\n".join(lines)
+
+    # Hard safety cap: 50,000 chars (~12,500 tokens) — prevents context window
+    # overflow when the model queries high-cardinality metrics without aggregation.
+    _MAX_CHARS = 50_000
+    if len(result) > _MAX_CHARS:
+        result = (
+            result[:_MAX_CHARS]
+            + f"\n\n[TRUNCATED: output exceeded {_MAX_CHARS} chars. Use aggregation= or a narrower filter_str.]"
+        )
+
+    return result
 
 
 # ── Tool 3.1 — gcloud_logging_query ─────────────────────────
@@ -344,7 +356,11 @@ def gcloud_logging_query(
     """
     logger.debug(
         "gcloud_logging_query: filter=%r project=%s limit=%d order_by=%s interval_hours=%s",
-        filter_expr, project, limit, order_by, interval_hours,
+        filter_expr,
+        project,
+        limit,
+        order_by,
+        interval_hours,
     )
 
     if not filter_expr.strip():
@@ -431,7 +447,10 @@ def gcloud_monitoring_query(
     """
     logger.debug(
         "gcloud_monitoring_query: metric=%s project=%s interval=%d resource_labels=%s",
-        metric_type, project, interval_minutes, resource_labels,
+        metric_type,
+        project,
+        interval_minutes,
+        resource_labels,
     )
 
     if not metric_type.strip():
@@ -462,6 +481,7 @@ def gcloud_monitoring_query(
         # Try to detect from environment
         try:
             import google.auth
+
             _, detected_project = google.auth.default()
             effective_project = detected_project
         except Exception:  # noqa: BLE001
@@ -589,8 +609,8 @@ def create_gcloud_tools(
             description=(
                 "Query Google Cloud Logging entries using a filter expression. "
                 "Returns formatted log entries with timestamp, severity, resource, and payload. "
-                "Common filters: resource.type=\"k8s_container\", severity>=ERROR, "
-                "resource.labels.namespace_name=\"production\". "
+                'Common filters: resource.type="k8s_container", severity>=ERROR, '
+                'resource.labels.namespace_name="production". '
                 "Uses Cloud Logging filter syntax: https://cloud.google.com/logging/docs/view/logging-query-language"
             ),
             parameters=[
@@ -600,7 +620,7 @@ def create_gcloud_tools(
                     description=(
                         "Cloud Logging filter expression. Examples: "
                         "'resource.type=\"k8s_container\" severity>=ERROR', "
-                        "'resource.type=\"k8s_container\" resource.labels.namespace_name=\"production\"', "
+                        '\'resource.type="k8s_container" resource.labels.namespace_name="production"\', '
                         "'textPayload:\"timeout\" severity>=WARNING'"
                     ),
                 ),
@@ -629,15 +649,15 @@ def create_gcloud_tools(
                     required=False,
                 ),
             ],
-            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc",
-                    interval_hours=0.0,
-                    _dp=project, _dl=log_limit, _dc=credentials: gcloud_logging_query(
-                filter_expr,
-                project=project or _dp,
-                limit=limit or _dl,
-                order_by=order_by,
-                interval_hours=interval_hours,
-                credentials=_dc,
+            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc", interval_hours=0.0, _dp=project, _dl=log_limit, _dc=credentials: (
+                gcloud_logging_query(
+                    filter_expr,
+                    project=project or _dp,
+                    limit=limit or _dl,
+                    order_by=order_by,
+                    interval_hours=interval_hours,
+                    credentials=_dc,
+                )
             ),
             categories=frozenset({LOGGING}),
         ),
@@ -654,7 +674,7 @@ def create_gcloud_tools(
                 "IMPORTANT: To filter by resource labels (namespace, cluster, pod, etc.), "
                 "use the 'resource_labels' dict parameter — do NOT put resource.labels.* "
                 "expressions into 'filter_str'. "
-                "Example: resource_labels={\"namespace_name\": \"production\"}."
+                'Example: resource_labels={"namespace_name": "production"}.'
             ),
             parameters=[
                 ToolParam(
@@ -705,19 +725,21 @@ def create_gcloud_tools(
                         "Each entry becomes a 'resource.labels.<key> = \"<value>\"' filter clause. "
                         "Common keys: namespace_name, cluster_name, container_name, pod_name, "
                         "destination_workload_namespace, location. "
-                        "Example: {\"namespace_name\": \"production\", \"cluster_name\": \"prod-1\"}"
+                        'Example: {"namespace_name": "production", "cluster_name": "prod-1"}'
                     ),
                     required=False,
                 ),
             ],
-            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", resource_labels=None, _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
-                metric_type,
-                project=project or _dp,
-                interval_minutes=interval_minutes or _di,
-                aggregation=aggregation,
-                filter_str=filter_str,
-                resource_labels=resource_labels,
-                credentials=_dc,
+            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", resource_labels=None, _dp=project, _di=metrics_interval_minutes, _dc=credentials: (
+                gcloud_monitoring_query(
+                    metric_type,
+                    project=project or _dp,
+                    interval_minutes=interval_minutes or _di,
+                    aggregation=aggregation,
+                    filter_str=filter_str,
+                    resource_labels=resource_labels,
+                    credentials=_dc,
+                )
             ),
             categories=frozenset({LOGGING}),
         ),

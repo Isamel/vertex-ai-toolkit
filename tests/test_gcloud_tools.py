@@ -343,13 +343,16 @@ class TestGcloudMonitoringQuery:
         fake_timestamp = MagicMock()
         fake_protobuf.timestamp_pb2 = fake_timestamp
 
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": fake_monitoring_v3,
-            "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": fake_protobuf,
-            "google.protobuf.duration_pb2": fake_duration,
-            "google.protobuf.timestamp_pb2": fake_timestamp,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google.cloud.monitoring_v3": fake_monitoring_v3,
+                "google.cloud.monitoring_v3.types": fake_monitoring,
+                "google.protobuf": fake_protobuf,
+                "google.protobuf.duration_pb2": fake_duration,
+                "google.protobuf.timestamp_pb2": fake_timestamp,
+            },
+        ):
             result = gcloud_monitoring_query(
                 "istio.io/service/server/request_count",
                 project="my-project",
@@ -362,10 +365,10 @@ class TestGcloudMonitoringQuery:
         )
         call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
         filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
-        assert 'resource.labels.namespace_name' in filter_used, (
+        assert "resource.labels.namespace_name" in filter_used, (
             f"Expected 'resource.labels.namespace_name' in filter, got: {filter_used}"
         )
-        assert 'resource.labels.cluster_name' in filter_used, (
+        assert "resource.labels.cluster_name" in filter_used, (
             f"Expected 'resource.labels.cluster_name' in filter, got: {filter_used}"
         )
 
@@ -424,13 +427,16 @@ class TestGcloudMonitoringQuery:
         fake_monitoring_v3 = MagicMock()
         fake_monitoring_v3.types = fake_monitoring
 
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": fake_monitoring_v3,
-            "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": MagicMock(),
-            "google.protobuf.duration_pb2": MagicMock(),
-            "google.protobuf.timestamp_pb2": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google.cloud.monitoring_v3": fake_monitoring_v3,
+                "google.cloud.monitoring_v3.types": fake_monitoring,
+                "google.protobuf": MagicMock(),
+                "google.protobuf.duration_pb2": MagicMock(),
+                "google.protobuf.timestamp_pb2": MagicMock(),
+            },
+        ):
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
                 project="my-project",
@@ -456,28 +462,27 @@ class TestGcloudMonitoringQuery:
         fake_monitoring_v3 = MagicMock()
         fake_monitoring_v3.types = fake_monitoring
 
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": fake_monitoring_v3,
-            "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": MagicMock(),
-            "google.protobuf.duration_pb2": MagicMock(),
-            "google.protobuf.timestamp_pb2": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google.cloud.monitoring_v3": fake_monitoring_v3,
+                "google.cloud.monitoring_v3.types": fake_monitoring,
+                "google.protobuf": MagicMock(),
+                "google.protobuf.duration_pb2": MagicMock(),
+                "google.protobuf.timestamp_pb2": MagicMock(),
+            },
+        ):
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
                 project="my-project",
                 resource_labels={"namespace_name": 'prod"inject'},
             )
 
-        assert fake_monitoring.ListTimeSeriesRequest.called, (
-            "ListTimeSeriesRequest was never called"
-        )
+        assert fake_monitoring.ListTimeSeriesRequest.called, "ListTimeSeriesRequest was never called"
         call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
         filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
         # The double quote in the value should be escaped
-        assert r'prod\"inject' in filter_used, (
-            f"Expected escaped quote in filter, got: {filter_used}"
-        )
+        assert r"prod\"inject" in filter_used, f"Expected escaped quote in filter, got: {filter_used}"
 
 
 # ── _format_log_entry ────────────────────────────────────────
@@ -756,6 +761,57 @@ class TestFormatTimeSeriesNoneHandling:
         result = _format_time_series([ts], "test.metric")
         assert "Series 1" in result
 
+    def test_series_cap_at_20(self) -> None:
+        """Output must be capped at 20 series to prevent context window overflow."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        def _make_ts(i: int) -> MagicMock:
+            ts = MagicMock()
+            ts.metric = MagicMock()
+            ts.metric.labels = {"response_code": str(i)}
+            ts.resource = MagicMock()
+            ts.resource.labels = {}
+            ts.points = []
+            return ts
+
+        series_list = [_make_ts(i) for i in range(50)]
+        result = _format_time_series(series_list, "istio.io/service/server/request_count")
+
+        # Should mention total count and cap
+        assert "50" in result
+        assert "showing first 20" in result
+        # Should mention the omitted series in the footer
+        assert "30 more series omitted" in result
+        # Should only contain Series 1..20, not Series 21+
+        assert "Series 20" in result
+        assert "Series 21" not in result
+
+    def test_hard_char_cap_at_50000(self) -> None:
+        """Output must be hard-capped at 50,000 chars to prevent context window overflow."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        # Build a single series with a point whose value produces a very long line
+        point = MagicMock()
+        point.interval = None
+        point.value = MagicMock()
+        point.value._pb = MagicMock()
+        point.value._pb.WhichOneof.return_value = "string_value"
+        point.value.string_value = "x" * 10_000  # very long value
+
+        ts = MagicMock()
+        ts.metric = MagicMock()
+        ts.metric.labels = {}
+        ts.resource = MagicMock()
+        ts.resource.labels = {}
+        # 20 points each with 10k chars → well over 50k total
+        ts.points = [point] * 20
+
+        series_list = [ts] * 20
+        result = _format_time_series(series_list, "test.metric")
+
+        assert len(result) <= 50_000 + 200  # allow for truncation suffix
+        assert "TRUNCATED" in result
+
 
 # ── Tool description quality ─────────────────────────────────
 
@@ -773,8 +829,7 @@ class TestMonitoringToolDescription:
 
         # The description should NOT contain a resource.labels example
         assert "resource.labels" not in filter_param.description, (
-            f"filter_str description should not show resource.labels examples, "
-            f"got: {filter_param.description}"
+            f"filter_str description should not show resource.labels examples, got: {filter_param.description}"
         )
 
     def test_tool_description_mentions_resource_labels_preference(self) -> None:
@@ -851,13 +906,16 @@ class TestMonitoringQueryTimestampRegression:
         fake_protobuf.duration_pb2 = MagicMock()
         fake_protobuf.timestamp_pb2 = fake_timestamp_pb2
 
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": fake_monitoring_v3,
-            "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": fake_protobuf,
-            "google.protobuf.duration_pb2": fake_protobuf.duration_pb2,
-            "google.protobuf.timestamp_pb2": fake_timestamp_pb2,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google.cloud.monitoring_v3": fake_monitoring_v3,
+                "google.cloud.monitoring_v3.types": fake_monitoring,
+                "google.protobuf": fake_protobuf,
+                "google.protobuf.duration_pb2": fake_protobuf.duration_pb2,
+                "google.protobuf.timestamp_pb2": fake_timestamp_pb2,
+            },
+        ):
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
                 project="my-project",
@@ -873,9 +931,7 @@ class TestMonitoringQueryTimestampRegression:
         for ts_instance in created_instances:
             if ts_instance.FromDatetime.called:
                 arg = ts_instance.FromDatetime.call_args[0][0]
-                assert isinstance(arg, datetime), (
-                    f"FromDatetime() must be called with a datetime, got {type(arg)}"
-                )
+                assert isinstance(arg, datetime), f"FromDatetime() must be called with a datetime, got {type(arg)}"
                 from_datetime_args.append(arg)
 
         assert len(from_datetime_args) >= 2, (
@@ -887,9 +943,7 @@ class TestMonitoringQueryTimestampRegression:
         dt_sorted = sorted(from_datetime_args)
         start_dt_arg = dt_sorted[0]
         end_dt_arg = dt_sorted[-1]
-        assert start_dt_arg < end_dt_arg, (
-            f"start_time ({start_dt_arg}) must be before end_time ({end_dt_arg})"
-        )
+        assert start_dt_arg < end_dt_arg, f"start_time ({start_dt_arg}) must be before end_time ({end_dt_arg})"
 
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
     def test_no_attribute_error_on_time_interval_construction(self, mock_client: MagicMock) -> None:
@@ -914,13 +968,16 @@ class TestMonitoringQueryTimestampRegression:
         fake_monitoring_v3 = MagicMock()
         fake_monitoring_v3.types = fake_monitoring
 
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": fake_monitoring_v3,
-            "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": MagicMock(),
-            "google.protobuf.duration_pb2": MagicMock(),
-            "google.protobuf.timestamp_pb2": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google.cloud.monitoring_v3": fake_monitoring_v3,
+                "google.cloud.monitoring_v3.types": fake_monitoring,
+                "google.protobuf": MagicMock(),
+                "google.protobuf.duration_pb2": MagicMock(),
+                "google.protobuf.timestamp_pb2": MagicMock(),
+            },
+        ):
             # Should NOT raise AttributeError: 'NoneType' object has no attribute 'FromDatetime'
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
