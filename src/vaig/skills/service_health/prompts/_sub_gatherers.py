@@ -523,6 +523,21 @@ pipe-separated metric names typically indicate external metrics from Cloud Monit
     in the ``kube-system`` and ``monitoring`` namespaces.
     Report: pod status, restart count, and any OOM-kill events.
 
+### Step 6f — HPA TARGETS `<unknown>` / `?/?` Deep-Dive
+When ``kubectl get hpa`` shows ``<unknown>/`` or ``?/?`` in the **TARGETS** column, you MUST:
+
+1. **Always** run ``kubectl_describe(resource_type="hpa", name="<name>", namespace="{ns}")``.
+   The describe output contains ``Events:`` and ``Conditions:`` sections that reveal whether:
+   - The failure is **cosmetic** (the display layer cannot read the metric value but the
+     HPA controller can still scale — e.g. ``AbleToScale: True`` with ``ScalingActive: False``
+     due to display issues only), OR
+   - The failure is **real** (e.g. ``FailedGetExternalMetric``, ``FailedGetCustomMetric``,
+     or ``AbleToScale: False``).
+2. If ``query_external_metrics`` is in your available tools, call it to confirm the External
+   Metrics Adapter is responding and the metric has data.
+3. Report the ``Conditions`` and ``Events`` from the describe output verbatim — do NOT
+   summarise them away; they contain the definitive root cause.
+
 ### Envoy / Istio Sidecar Diagnostics
 If the pod has a container named `istio-proxy` or `envoy`, or the annotation
 `sidecar.istio.io/inject: "true"`, treat it as mesh-enrolled and run:
