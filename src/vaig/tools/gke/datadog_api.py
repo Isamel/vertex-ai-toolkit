@@ -59,7 +59,7 @@ def _probe_daemonset_cluster_name(apps_v1: Any) -> str:  # noqa: ANN401
     ``valueFrom`` is in use, set ``datadog.cluster_name_override`` in config.
     """
     cache_key = f"_dd_cluster_name:{id(apps_v1)}"
-    cached = _cache._get_cached(cache_key, ttl=3600)
+    cached: str | None = _cache._get_cached(cache_key, ttl=3600)
     if cached is not None:
         return cached
 
@@ -67,7 +67,7 @@ def _probe_daemonset_cluster_name(apps_v1: Any) -> str:  # noqa: ANN401
         from vaig.tools.gke.datadog import _check_datadog_agent  # noqa: WPS433
 
         result = _check_datadog_agent(apps_v1)
-        detected = result.get("cluster_name", "")
+        detected: str = result.get("cluster_name", "") or ""
     except Exception:  # noqa: BLE001
         return ""  # do not cache failures — let next call retry
 
