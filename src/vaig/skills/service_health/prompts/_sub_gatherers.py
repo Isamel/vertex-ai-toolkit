@@ -523,6 +523,21 @@ pipe-separated metric names typically indicate external metrics from Cloud Monit
     in the ``kube-system`` and ``monitoring`` namespaces.
     Report: pod status, restart count, and any OOM-kill events.
 
+### Step 6f — HPA TARGETS `<unknown>` / `?/?` Deep-Dive
+When ``kubectl get hpa`` shows ``<unknown>/`` or ``?/?`` in the **TARGETS** column, you MUST:
+
+1. **Always** run ``kubectl_describe(resource_type="hpa", name="<name>", namespace="{ns}")``.
+   The describe output contains ``Events:`` and ``Conditions:`` sections that reveal whether:
+   - The failure is **cosmetic** (the display layer cannot read the metric value but the
+     HPA controller can still scale — e.g. ``AbleToScale: True`` with ``ScalingActive: False``
+     due to display issues only), OR
+   - The failure is **real** (e.g. ``FailedGetExternalMetric``, ``FailedGetCustomMetric``,
+     or ``AbleToScale: False``).
+2. If ``query_external_metrics`` is in your available tools, call it to confirm the External
+   Metrics Adapter is responding and the metric has data.
+3. Report the ``Conditions`` and ``Events`` from the describe output verbatim — do NOT
+   summarize them away; they contain the definitive root cause.
+
 ### Envoy / Istio Sidecar Diagnostics
 If the pod has a container named `istio-proxy` or `envoy`, or the annotation
 `sidecar.istio.io/inject: "true"`, treat it as mesh-enrolled and run:
@@ -1286,16 +1301,25 @@ AND resource.labels.namespace_name="{safe_ns}"
 Recommended params: ``interval_hours=0.25``, ``limit=50``
 
 ### Step 7c — Envoy Upstream Errors — Query C (ALWAYS execute)
-You MUST call ``gcloud_logging_query`` to surface upstream connection failures:
+You MUST call ``gcloud_logging_query`` to surface upstream connection failures.
+
+**Note**: Istio access logs are structured JSON — when querying ``container_name="istio-proxy"``,
+prefer ``jsonPayload`` fields over ``textPayload`` regex where possible.
+
+Use a combined OR filter to catch both structured JSON logs and plain-text logs:
 
 ```
 severity>=WARNING AND resource.type="k8s_container"
 AND resource.labels.container_name="istio-proxy"
-AND textPayload=~"upstream connect error"
 AND resource.labels.namespace_name="{safe_ns}"
+AND (jsonPayload.message:"upstream" OR textPayload=~"upstream connect error")
 ```
 
 Recommended params: ``interval_hours=1.0``, ``limit=30``
+
+**After Step 7c**: If results are found, extract the ``upstream_cluster`` field from
+``jsonPayload`` — this identifies which backend service is failing. Format it in your
+findings as: ``upstream_cluster: <value>``
 
 ### Step 7d — Istiod Discovery Logs — Query D (ALWAYS execute)
 You MUST call ``gcloud_logging_query`` for control-plane discovery errors.
@@ -1371,8 +1395,9 @@ If no errors found: "No ERROR-level logs found for <namespace> in the last 1 hou
 (List each unique Envoy error pattern: timestamp, message.
 If no errors found: "No Envoy access errors found.")
 
-### Step 7c Results — Envoy Upstream Errors (upstream connect error)
-(List upstream connect error patterns found, or "Not found.")
+### Step 7c Results — Envoy Upstream Errors (upstream connect error / jsonPayload.message upstream)
+(List upstream connect error patterns found, or "Not found."
+If found, include ``upstream_cluster: <value>`` extracted from ``jsonPayload`` for each entry.)
 
 ### Step 7d Results — Istiod Discovery Logs (discovery, severity>=WARNING)
 (List relevant entries — flag ONLY items referencing the target service/namespace.

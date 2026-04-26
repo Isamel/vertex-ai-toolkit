@@ -154,15 +154,16 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource, name=None, namespace="default", output="table",
-                    label_selector=None, field_selector=None, _cfg=gke_config: kubectl.kubectl_get(
-                resource,
-                gke_config=_cfg,
-                name=name,
-                namespace=namespace,
-                output=output,
-                label_selector=label_selector,
-                field_selector=field_selector,
+            execute=lambda resource, name=None, namespace="default", output="table", label_selector=None, field_selector=None, _cfg=gke_config: (
+                kubectl.kubectl_get(
+                    resource,
+                    gke_config=_cfg,
+                    name=name,
+                    namespace=namespace,
+                    output=output,
+                    label_selector=label_selector,
+                    field_selector=field_selector,
+                )
             ),
         ),
         ToolDef(
@@ -191,12 +192,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource_type=None, name=None, namespace="default", resource=None,
-                    _cfg=gke_config: (
+            execute=lambda resource_type=None, name=None, namespace="default", resource=None, _cfg=gke_config: (
                 ToolResult(output="Error: resource_type (or resource) and name are required")
                 if not (resource_type or resource) or not name
                 else kubectl.kubectl_describe(
-                    resource_type or resource, name, gke_config=_cfg, namespace=namespace,
+                    resource_type or resource,
+                    name,
+                    gke_config=_cfg,
+                    namespace=namespace,
                 )
             ),
         ),
@@ -243,14 +246,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda pod, namespace="default", container=None, tail_lines=100,
-                    since=None, _cfg=gke_config: kubectl.kubectl_logs(
-                pod,
-                gke_config=_cfg,
-                namespace=namespace,
-                container=container,
-                tail_lines=tail_lines,
-                since=since,
+            execute=lambda pod, namespace="default", container=None, tail_lines=100, since=None, _cfg=gke_config: (
+                kubectl.kubectl_logs(
+                    pod,
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    container=container,
+                    tail_lines=tail_lines,
+                    since=since,
+                )
             ),
         ),
         ToolDef(
@@ -284,8 +288,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda resource_type="pods", name=None, namespace="default":
-                    _autopilot_kubectl_top(resource_type, name=name, namespace=namespace),
+            execute=lambda resource_type="pods", name=None, namespace="default": _autopilot_kubectl_top(
+                resource_type, name=name, namespace=namespace
+            ),
         ),
         # ── Write operations ──────────────────────────────────
         ToolDef(
@@ -320,9 +325,12 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda resource, name, replicas, namespace="default",
-                    _cfg=gke_config: mutations.kubectl_scale(
-                resource, name, replicas, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource, name, replicas, namespace="default", _cfg=gke_config: mutations.kubectl_scale(
+                resource,
+                name,
+                replicas,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         ToolDef(
@@ -352,9 +360,11 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda resource, name, namespace="default",
-                    _cfg=gke_config: mutations.kubectl_restart(
-                resource, name, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource, name, namespace="default", _cfg=gke_config: mutations.kubectl_restart(
+                resource,
+                name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         ToolDef(
@@ -393,9 +403,12 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda resource, name, labels, namespace="default",
-                    _cfg=gke_config: mutations.kubectl_label(
-                resource, name, labels, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource, name, labels, namespace="default", _cfg=gke_config: mutations.kubectl_label(
+                resource,
+                name,
+                labels,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         ToolDef(
@@ -434,9 +447,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda resource, name, annotations, namespace="default",
-                    _cfg=gke_config: mutations.kubectl_annotate(
-                resource, name, annotations, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource, name, annotations, namespace="default", _cfg=gke_config: (
+                mutations.kubectl_annotate(
+                    resource,
+                    name,
+                    annotations,
+                    gke_config=_cfg,
+                    namespace=namespace,
+                )
             ),
         ),
         # ── Diagnostic tools (Phase 1) ────────────────────────
@@ -481,15 +499,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda namespace="default", event_type=None, involved_object_name=None,
-                    involved_object_kind=None, limit=50,
-                    _cfg=gke_config: diagnostics.get_events(
-                gke_config=_cfg,
-                namespace=namespace,
-                event_type=event_type,
-                involved_object_name=involved_object_name,
-                involved_object_kind=involved_object_kind,
-                limit=limit,
+            execute=lambda namespace="default", event_type=None, involved_object_name=None, involved_object_kind=None, limit=50, _cfg=gke_config: (
+                diagnostics.get_events(
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    event_type=event_type,
+                    involved_object_name=involved_object_name,
+                    involved_object_kind=involved_object_kind,
+                    limit=limit,
+                )
             ),
         ),
         ToolDef(
@@ -515,9 +533,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda name, namespace="default",
-                    _cfg=gke_config: diagnostics.get_rollout_status(
-                name, gke_config=_cfg, namespace=namespace,
+            execute=lambda name, namespace="default", _cfg=gke_config: diagnostics.get_rollout_status(
+                name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         # ── Diagnostic tools (Phase 2) ────────────────────────
@@ -542,7 +561,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             execute=lambda name=None, _cfg=gke_config: diagnostics.get_node_conditions(
-                gke_config=_cfg, name=name,
+                gke_config=_cfg,
+                name=name,
             ),
         ),
         ToolDef(
@@ -570,9 +590,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda name, namespace="default",
-                    _cfg=gke_config: diagnostics.get_container_status(
-                name, gke_config=_cfg, namespace=namespace,
+            execute=lambda name, namespace="default", _cfg=gke_config: diagnostics.get_container_status(
+                name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         # ── Diagnostic tools (Phase 3) ────────────────────────
@@ -623,10 +644,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             cacheable=False,
-            execute=lambda pod_name, namespace, command, container=None, timeout=30,
-                    _cfg=gke_config: security.exec_command(
-                pod_name, command, gke_config=_cfg, namespace=namespace,
-                container=container, timeout=timeout,
+            execute=lambda pod_name, namespace, command, container=None, timeout=30, _cfg=gke_config: (
+                security.exec_command(
+                    pod_name,
+                    command,
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    container=container,
+                    timeout=timeout,
+                )
             ),
         ),
         ToolDef(
@@ -642,9 +668,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="verb",
                     type="string",
-                    description=(
-                        "The action to check: get, list, watch, create, update, patch, delete"
-                    ),
+                    description=("The action to check: get, list, watch, create, update, patch, delete"),
                 ),
                 ToolParam(
                     name="resource",
@@ -662,9 +686,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="service_account",
                     type="string",
-                    description=(
-                        "Service account name to check. Omit to check current user's permissions."
-                    ),
+                    description=("Service account name to check. Omit to check current user's permissions."),
                     required=False,
                 ),
                 ToolParam(
@@ -675,10 +697,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda verb, resource, namespace, service_account=None, resource_name=None,
-                    _cfg=gke_config: security.check_rbac(
-                verb, resource, gke_config=_cfg, namespace=namespace,
-                service_account=service_account, resource_name=resource_name,
+            execute=lambda verb, resource, namespace, service_account=None, resource_name=None, _cfg=gke_config: (
+                security.check_rbac(
+                    verb,
+                    resource,
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    service_account=service_account,
+                    resource_name=resource_name,
+                )
             ),
         ),
         ToolDef(
@@ -706,17 +733,16 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="revision",
                     type="integer",
-                    description=(
-                        "Specific revision number to show detailed info for. "
-                        "Omit to list all revisions."
-                    ),
+                    description=("Specific revision number to show detailed info for. Omit to list all revisions."),
                     required=False,
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda name, namespace, revision=None,
-                    _cfg=gke_config: diagnostics.get_rollout_history(
-                name, gke_config=_cfg, namespace=namespace, revision=revision,
+            execute=lambda name, namespace, revision=None, _cfg=gke_config: diagnostics.get_rollout_history(
+                name,
+                gke_config=_cfg,
+                namespace=namespace,
+                revision=revision,
             ),
         ),
         ToolDef(
@@ -733,9 +759,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Namespace to scan. Leave empty or use 'all' for all namespaces."
-                    ),
+                    description=("Namespace to scan. Leave empty or use 'all' for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -761,11 +785,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace="", include_jobs=False, include_rollouts=False,
-                    force_refresh=False,
-                    _cfg=gke_config: discovery.discover_workloads(
-                gke_config=_cfg, namespace=namespace, include_jobs=include_jobs,
-                include_rollouts=include_rollouts, force_refresh=force_refresh,
+            execute=lambda namespace="", include_jobs=False, include_rollouts=False, force_refresh=False, _cfg=gke_config: (
+                discovery.discover_workloads(
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    include_jobs=include_jobs,
+                    include_rollouts=include_rollouts,
+                    force_refresh=force_refresh,
+                )
             ),
         ),
         ToolDef(
@@ -783,9 +810,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Namespace to scope sidecar scanning. Leave empty for all namespaces."
-                    ),
+                    description=("Namespace to scope sidecar scanning. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -796,9 +821,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: discovery.discover_service_mesh(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: discovery.discover_service_mesh(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -815,9 +841,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Namespace to scan. Leave empty for all namespaces."
-                    ),
+                    description=("Namespace to scan. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -828,9 +852,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: discovery.discover_network_topology(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: discovery.discover_network_topology(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -866,9 +891,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace, service_name="", force_refresh=False,
-                    _cfg=gke_config: discovery.discover_dependencies(
-                namespace, service_name=service_name, gke_config=_cfg, force_refresh=force_refresh,
+            execute=lambda namespace, service_name="", force_refresh=False, _cfg=gke_config: (
+                discovery.discover_dependencies(
+                    namespace,
+                    service_name=service_name,
+                    gke_config=_cfg,
+                    force_refresh=force_refresh,
+                )
             ),
         ),
         # ── Mesh introspection tools ─────────────────────────
@@ -886,10 +915,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Filter injection status to a specific namespace. "
-                        "Leave empty for all namespaces."
-                    ),
+                    description=("Filter injection status to a specific namespace. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -900,9 +926,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({MESH}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: mesh.get_mesh_overview(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: mesh.get_mesh_overview(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -920,9 +947,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Filter to a specific namespace. Leave empty for all namespaces."
-                    ),
+                    description=("Filter to a specific namespace. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -933,9 +958,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({MESH}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: mesh.get_mesh_config(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: mesh.get_mesh_config(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -952,9 +978,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Filter to a specific namespace. Leave empty for all namespaces."
-                    ),
+                    description=("Filter to a specific namespace. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -965,9 +989,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({MESH}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: mesh.get_mesh_security(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: mesh.get_mesh_security(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -985,9 +1010,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description=(
-                        "Filter to a specific namespace. Leave empty for all namespaces."
-                    ),
+                    description=("Filter to a specific namespace. Leave empty for all namespaces."),
                     required=False,
                 ),
                 ToolParam(
@@ -998,9 +1021,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({MESH}),
-            execute=lambda namespace="", force_refresh=False,
-                    _cfg=gke_config: mesh.get_sidecar_status(
-                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            execute=lambda namespace="", force_refresh=False, _cfg=gke_config: mesh.get_sidecar_status(
+                gke_config=_cfg,
+                namespace=namespace,
+                force_refresh=force_refresh,
             ),
         ),
         # ── Labels tool (always registered) ──────────────────
@@ -1042,15 +1066,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda resource_type, namespace="default", name="",
-                    label_filter="", annotation_filter="",
-                    _cfg=gke_config: kubectl_get_labels(
-                resource_type=resource_type,
-                gke_config=_cfg,
-                namespace=namespace,
-                name=name,
-                label_filter=label_filter,
-                annotation_filter=annotation_filter,
+            execute=lambda resource_type, namespace="default", name="", label_filter="", annotation_filter="", _cfg=gke_config: (
+                kubectl_get_labels(
+                    resource_type=resource_type,
+                    gke_config=_cfg,
+                    namespace=namespace,
+                    name=name,
+                    label_filter=label_filter,
+                    annotation_filter=annotation_filter,
+                )
             ),
         ),
         # ── Datadog observability tools ───────────────────────
@@ -1081,9 +1105,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace="default", deployment="",
-                    _cfg=gke_config: get_datadog_config(
-                gke_config=_cfg, namespace=namespace, deployment=deployment,
+            execute=lambda namespace="default", deployment="", _cfg=gke_config: get_datadog_config(
+                gke_config=_cfg,
+                namespace=namespace,
+                deployment=deployment,
             ),
         ),
         # ── Scaling tools ─────────────────────────────────────
@@ -1109,9 +1134,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({SCALING}),
-            execute=lambda name, namespace="default",
-                    _cfg=gke_config: get_scaling_status(
-                name, gke_config=_cfg, namespace=namespace,
+            execute=lambda name, namespace="default", _cfg=gke_config: get_scaling_status(
+                name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         ToolDef(
@@ -1159,9 +1185,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({SCALING, MONITORING}),
-            execute=lambda metric_name="", namespace="",
-                    _cfg=gke_config: query_custom_metrics(
-                metric_name, gke_config=_cfg, namespace=namespace,
+            execute=lambda metric_name="", namespace="", _cfg=gke_config: query_custom_metrics(
+                metric_name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         ToolDef(
@@ -1194,9 +1221,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({SCALING, MONITORING}),
-            execute=lambda metric_name, namespace="",
-                    _cfg=gke_config: query_external_metrics(
-                metric_name, gke_config=_cfg, namespace=namespace,
+            execute=lambda metric_name, namespace="", _cfg=gke_config: query_external_metrics(
+                metric_name,
+                gke_config=_cfg,
+                namespace=namespace,
             ),
         ),
         # ── Cloud Monitoring metrics tools ────────────────────
@@ -1223,8 +1251,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     name="pod_name_prefix",
                     type="string",
                     description=(
-                        "Pod name prefix to match (e.g. 'frontend-' matches "
-                        "'frontend-abc-123', 'frontend-xyz-456')."
+                        "Pod name prefix to match (e.g. 'frontend-' matches 'frontend-abc-123', 'frontend-xyz-456')."
                     ),
                 ),
                 ToolParam(
@@ -1244,13 +1271,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({MONITORING, KUBERNETES}),
-            execute=lambda namespace, pod_name_prefix, window_minutes=60,
-                    metric_type="all", _cfg=gke_config: get_pod_metrics(
-                namespace=namespace,
-                pod_name_prefix=pod_name_prefix,
-                gke_config=_cfg,
-                window_minutes=window_minutes,
-                metric_type=metric_type,
+            execute=lambda namespace, pod_name_prefix, window_minutes=60, metric_type="all", _cfg=gke_config: (
+                get_pod_metrics(
+                    namespace=namespace,
+                    pod_name_prefix=pod_name_prefix,
+                    gke_config=_cfg,
+                    window_minutes=window_minutes,
+                    metric_type=metric_type,
+                )
             ),
         ),
         ToolDef(
@@ -1272,144 +1300,156 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
 
     # ── Helm tools (conditional on helm_enabled) ─────────────
     if gke_config.helm_enabled:
-        tools.extend([
-            ToolDef(
-                name="helm_list_releases",
-                description=(
-                    "List all Helm releases in a namespace. Queries Kubernetes secrets "
-                    "with owner=helm label selector. Shows name, chart, version, status, "
-                    "and app version. Only shows the latest revision per release. "
-                    "Read-only — does not modify any resources."
+        tools.extend(
+            [
+                ToolDef(
+                    name="helm_list_releases",
+                    description=(
+                        "List all Helm releases in a namespace. Queries Kubernetes secrets "
+                        "with owner=helm label selector. Shows name, chart, version, status, "
+                        "and app version. Only shows the latest revision per release. "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace (default: 'default')",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="force_refresh",
+                            type="boolean",
+                            description="Bypass cache and re-scan (default: false).",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({HELM}),
+                    execute=lambda namespace="default", force_refresh=False, _cfg=gke_config: helm_list_releases(
+                        gke_config=_cfg,
+                        namespace=namespace,
+                        force_refresh=force_refresh,
+                    ),
                 ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace (default: 'default')",
-                        required=False,
+                ToolDef(
+                    name="helm_release_status",
+                    description=(
+                        "Get detailed status of a specific Helm release. Shows chart, "
+                        "version, app version, first/last deployed timestamps, description, "
+                        "and notes. Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="force_refresh",
-                        type="boolean",
-                        description="Bypass cache and re-scan (default: false).",
-                        required=False,
+                    parameters=[
+                        ToolParam(
+                            name="release_name",
+                            type="string",
+                            description="Name of the Helm release",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace (default: 'default')",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="force_refresh",
+                            type="boolean",
+                            description="Bypass cache and re-scan (default: false).",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({HELM}),
+                    execute=lambda release_name, namespace="default", force_refresh=False, _cfg=gke_config: (
+                        helm_release_status(
+                            gke_config=_cfg,
+                            release_name=release_name,
+                            namespace=namespace,
+                            force_refresh=force_refresh,
+                        )
                     ),
-                ],
-                categories=frozenset({HELM}),
-                execute=lambda namespace="default", force_refresh=False,
-                        _cfg=gke_config: helm_list_releases(
-                    gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
                 ),
-            ),
-            ToolDef(
-                name="helm_release_status",
-                description=(
-                    "Get detailed status of a specific Helm release. Shows chart, "
-                    "version, app version, first/last deployed timestamps, description, "
-                    "and notes. Read-only — does not modify any resources."
+                ToolDef(
+                    name="helm_release_history",
+                    description=(
+                        "Get revision history of a Helm release. Shows revision number, "
+                        "status, chart version, app version, description, and deployment "
+                        "timestamp for each revision (newest first). "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="release_name",
+                            type="string",
+                            description="Name of the Helm release",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace (default: 'default')",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="force_refresh",
+                            type="boolean",
+                            description="Bypass cache and re-scan (default: false).",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({HELM}),
+                    execute=lambda release_name, namespace="default", force_refresh=False, _cfg=gke_config: (
+                        helm_release_history(
+                            gke_config=_cfg,
+                            release_name=release_name,
+                            namespace=namespace,
+                            force_refresh=force_refresh,
+                        )
+                    ),
                 ),
-                parameters=[
-                    ToolParam(
-                        name="release_name",
-                        type="string",
-                        description="Name of the Helm release",
+                ToolDef(
+                    name="helm_release_values",
+                    description=(
+                        "Get the values used in a Helm release. By default returns only "
+                        "user-supplied overrides. Set all_values=true to include chart "
+                        "defaults merged with user overrides. Output is YAML formatted. "
+                        "Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace (default: 'default')",
-                        required=False,
+                    parameters=[
+                        ToolParam(
+                            name="release_name",
+                            type="string",
+                            description="Name of the Helm release",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace (default: 'default')",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="all_values",
+                            type="boolean",
+                            description="Include chart defaults merged with overrides (default: false).",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="force_refresh",
+                            type="boolean",
+                            description="Bypass cache and re-scan (default: false).",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({HELM}),
+                    execute=lambda release_name, namespace="default", all_values=False, force_refresh=False, _cfg=gke_config: (
+                        helm_release_values(
+                            gke_config=_cfg,
+                            release_name=release_name,
+                            namespace=namespace,
+                            all_values=all_values,
+                            force_refresh=force_refresh,
+                        )
                     ),
-                    ToolParam(
-                        name="force_refresh",
-                        type="boolean",
-                        description="Bypass cache and re-scan (default: false).",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({HELM}),
-                execute=lambda release_name, namespace="default", force_refresh=False,
-                        _cfg=gke_config: helm_release_status(
-                    gke_config=_cfg, release_name=release_name, namespace=namespace,
-                    force_refresh=force_refresh,
                 ),
-            ),
-            ToolDef(
-                name="helm_release_history",
-                description=(
-                    "Get revision history of a Helm release. Shows revision number, "
-                    "status, chart version, app version, description, and deployment "
-                    "timestamp for each revision (newest first). "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="release_name",
-                        type="string",
-                        description="Name of the Helm release",
-                    ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace (default: 'default')",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="force_refresh",
-                        type="boolean",
-                        description="Bypass cache and re-scan (default: false).",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({HELM}),
-                execute=lambda release_name, namespace="default", force_refresh=False,
-                        _cfg=gke_config: helm_release_history(
-                    gke_config=_cfg, release_name=release_name, namespace=namespace,
-                    force_refresh=force_refresh,
-                ),
-            ),
-            ToolDef(
-                name="helm_release_values",
-                description=(
-                    "Get the values used in a Helm release. By default returns only "
-                    "user-supplied overrides. Set all_values=true to include chart "
-                    "defaults merged with user overrides. Output is YAML formatted. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="release_name",
-                        type="string",
-                        description="Name of the Helm release",
-                    ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace (default: 'default')",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="all_values",
-                        type="boolean",
-                        description="Include chart defaults merged with overrides (default: false).",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="force_refresh",
-                        type="boolean",
-                        description="Bypass cache and re-scan (default: false).",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({HELM}),
-                execute=lambda release_name, namespace="default", all_values=False,
-                        force_refresh=False,
-                        _cfg=gke_config: helm_release_values(
-                    gke_config=_cfg, release_name=release_name, namespace=namespace,
-                    all_values=all_values, force_refresh=force_refresh,
-                ),
-            ),
-        ])
+            ]
+        )
 
     # ── ArgoCD tools (auto-detect or explicit toggle) ─────────
     _acd_setting = gke_config.argocd_enabled
@@ -1430,149 +1470,147 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             api_client=_acd_api_client,
         )
         if not _argocd_active:
-            logger.debug(
-                "ArgoCD not detected — skipping ArgoCD tools. "
-                "Set argocd_enabled=true to force-enable."
-            )
+            logger.debug("ArgoCD not detected — skipping ArgoCD tools. Set argocd_enabled=true to force-enable.")
 
     if _argocd_active:
-        tools.extend([
-            ToolDef(
-                name="argocd_list_applications",
-                description=(
-                    "List all ArgoCD Applications. Namespace is auto-discovered when not "
-                    "specified — probes common namespaces (argocd, argo-cd, argocd-system, "
-                    "gitops, argo), then falls back to a cluster-wide scan if none match. "
-                    "Shows name, project, sync status, health status, source "
-                    "repo, target revision, and destination. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
-                        required=False,
+        tools.extend(
+            [
+                ToolDef(
+                    name="argocd_list_applications",
+                    description=(
+                        "List all ArgoCD Applications. Namespace is auto-discovered when not "
+                        "specified — probes common namespaces (argocd, argo-cd, argocd-system, "
+                        "gitops, argo), then falls back to a cluster-wide scan if none match. "
+                        "Shows name, project, sync status, health status, source "
+                        "repo, target revision, and destination. Read-only — does not modify any resources."
                     ),
-                ],
-                categories=frozenset({ARGOCD}),
-                execute=lambda namespace="",
-                        _cfg=gke_config: argocd_list_applications(
-                    namespace=namespace,
-                ),
-            ),
-            ToolDef(
-                name="argocd_app_status",
-                description=(
-                    "Get detailed status of a specific ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified — probes common namespaces then falls "
-                    "back to a cluster-wide scan. Shows sync status, health status, "
-                    "source info, destination, sync policy, conditions, and last operation "
-                    "state. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGOCD}),
+                    execute=lambda namespace="", _cfg=gke_config: argocd_list_applications(
+                        namespace=namespace,
                     ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({ARGOCD}),
-                execute=lambda app_name, namespace="",
-                        _cfg=gke_config: argocd_app_status(
-                    app_name=app_name, namespace=namespace,
                 ),
-            ),
-            ToolDef(
-                name="argocd_app_history",
-                description=(
-                    "Get deployment history of an ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified — probes common namespaces then falls "
-                    "back to a cluster-wide scan. Shows past deployments with "
-                    "revision, deployment time, and source info (most recent first). "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
+                ToolDef(
+                    name="argocd_app_status",
+                    description=(
+                        "Get detailed status of a specific ArgoCD Application. Namespace is "
+                        "auto-discovered when not specified — probes common namespaces then falls "
+                        "back to a cluster-wide scan. Shows sync status, health status, "
+                        "source info, destination, sync policy, conditions, and last operation "
+                        "state. Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
-                        required=False,
+                    parameters=[
+                        ToolParam(
+                            name="app_name",
+                            type="string",
+                            description="Name of the ArgoCD Application",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGOCD}),
+                    execute=lambda app_name, namespace="", _cfg=gke_config: argocd_app_status(
+                        app_name=app_name,
+                        namespace=namespace,
                     ),
-                ],
-                categories=frozenset({ARGOCD}),
-                execute=lambda app_name, namespace="",
-                        _cfg=gke_config: argocd_app_history(
-                    app_name=app_name, namespace=namespace,
                 ),
-            ),
-            ToolDef(
-                name="argocd_app_diff",
-                description=(
-                    "Show resources that are out-of-sync for an ArgoCD Application. "
-                    "Namespace is auto-discovered when not specified — probes common "
-                    "namespaces then falls back to a cluster-wide scan. Returns resources "
-                    "where sync status is not Synced or health status is not Healthy. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
+                ToolDef(
+                    name="argocd_app_history",
+                    description=(
+                        "Get deployment history of an ArgoCD Application. Namespace is "
+                        "auto-discovered when not specified — probes common namespaces then falls "
+                        "back to a cluster-wide scan. Shows past deployments with "
+                        "revision, deployment time, and source info (most recent first). "
+                        "Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
-                        required=False,
+                    parameters=[
+                        ToolParam(
+                            name="app_name",
+                            type="string",
+                            description="Name of the ArgoCD Application",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGOCD}),
+                    execute=lambda app_name, namespace="", _cfg=gke_config: argocd_app_history(
+                        app_name=app_name,
+                        namespace=namespace,
                     ),
-                ],
-                categories=frozenset({ARGOCD}),
-                execute=lambda app_name, namespace="",
-                        _cfg=gke_config: argocd_app_diff(
-                    app_name=app_name, namespace=namespace,
                 ),
-            ),
-            ToolDef(
-                name="argocd_app_managed_resources",
-                description=(
-                    "List all resources managed by an ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified — probes common namespaces then falls "
-                    "back to a cluster-wide scan. Shows resources grouped by kind "
-                    "with group, name, namespace, sync status, health status, and pruning "
-                    "requirements. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
+                ToolDef(
+                    name="argocd_app_diff",
+                    description=(
+                        "Show resources that are out-of-sync for an ArgoCD Application. "
+                        "Namespace is auto-discovered when not specified — probes common "
+                        "namespaces then falls back to a cluster-wide scan. Returns resources "
+                        "where sync status is not Synced or health status is not Healthy. "
+                        "Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
-                        required=False,
+                    parameters=[
+                        ToolParam(
+                            name="app_name",
+                            type="string",
+                            description="Name of the ArgoCD Application",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGOCD}),
+                    execute=lambda app_name, namespace="", _cfg=gke_config: argocd_app_diff(
+                        app_name=app_name,
+                        namespace=namespace,
                     ),
-                ],
-                categories=frozenset({ARGOCD}),
-                execute=lambda app_name, namespace="",
-                        _cfg=gke_config: argocd_app_managed_resources(
-                    app_name=app_name, namespace=namespace,
                 ),
-            ),
-        ])
+                ToolDef(
+                    name="argocd_app_managed_resources",
+                    description=(
+                        "List all resources managed by an ArgoCD Application. Namespace is "
+                        "auto-discovered when not specified — probes common namespaces then falls "
+                        "back to a cluster-wide scan. Shows resources grouped by kind "
+                        "with group, name, namespace, sync status, health status, and pruning "
+                        "requirements. Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="app_name",
+                            type="string",
+                            description="Name of the ArgoCD Application",
+                        ),
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGOCD}),
+                    execute=lambda app_name, namespace="", _cfg=gke_config: argocd_app_managed_resources(
+                        app_name=app_name,
+                        namespace=namespace,
+                    ),
+                ),
+            ]
+        )
 
     # ── Datadog API tools (conditional on datadog.enabled) ────
     from vaig.core.config import get_settings as _get_settings  # noqa: WPS433
@@ -1580,267 +1618,285 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
     _dd_config = _get_settings().datadog
     if _dd_config.enabled:
         logger.info("Datadog API tools registered (site=%s)", _dd_config.site)
-        tools.extend([
-            ToolDef(
-                name="query_datadog_metrics",
-                description=(
-                    "Query Datadog metrics for a GKE cluster using the Datadog Metrics v1 API. "
-                    "Supports built-in metric templates: cpu, memory, restarts, network_in, "
-                    "network_out, disk_read, disk_write. "
-                    "Optionally filter by service and env tags (e.g. from DD_SERVICE/DD_ENV labels) "
-                    "to scope the query to a specific workload. "
-                    "Returns average, maximum, and latest values per series over the requested "
-                    "time window. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="cluster_name",
-                        type="string",
-                        description="GKE cluster name used to scope the metric query",
+        tools.extend(
+            [
+                ToolDef(
+                    name="query_datadog_metrics",
+                    description=(
+                        "Query Datadog metrics for a GKE cluster using the Datadog Metrics v1 API. "
+                        "Supports built-in metric templates: cpu, memory, restarts, network_in, "
+                        "network_out, disk_read, disk_write. "
+                        "Optionally filter by service and env tags (e.g. from DD_SERVICE/DD_ENV labels) "
+                        "to scope the query to a specific workload. "
+                        "Returns average, maximum, and latest values per series over the requested "
+                        "time window. Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="metric",
-                        type="string",
-                        description=(
-                            "Metric template to query: cpu, memory, restarts, network_in, "
-                            "network_out, disk_read, or disk_write (default: cpu)"
+                    parameters=[
+                        ToolParam(
+                            name="cluster_name",
+                            type="string",
+                            description="GKE cluster name used to scope the metric query",
                         ),
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="from_ts",
-                        type="integer",
-                        description="Unix timestamp for the start of the query window (defaults to now-3600)",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="to_ts",
-                        type="integer",
-                        description="Unix timestamp for the end of the query window (defaults to now)",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="service",
-                        type="string",
-                        description=(
-                            "Optional Datadog service tag to narrow the query "
-                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                        ToolParam(
+                            name="metric",
+                            type="string",
+                            description=(
+                                "Metric template to query: cpu, memory, restarts, network_in, "
+                                "network_out, disk_read, or disk_write (default: cpu)"
+                            ),
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="env",
-                        type="string",
-                        description=(
-                            "Optional Datadog environment tag to narrow the query "
-                            "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                        ToolParam(
+                            name="from_ts",
+                            type="integer",
+                            description="Unix timestamp for the start of the query window (defaults to now-3600)",
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({DATADOG}),
-                execute=lambda cluster_name, metric="cpu", from_ts=0, to_ts=0,
-                        service=None, env=None,
-                        _dd=_dd_config: query_datadog_metrics(
-                    cluster_name=cluster_name, metric=metric,
-                    from_ts=from_ts, to_ts=to_ts, service=service, env=env, config=_dd,
-                ),
-            ),
-            ToolDef(
-                name="get_datadog_monitors",
-                description=(
-                    "Fetch active Datadog monitors using the Datadog Monitors v1 API. "
-                    "Returns monitors filtered by state (default: Alert) and optionally "
-                    "by cluster name, service, and environment tags. Shows monitor ID, name, type, "
-                    "and current state. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="cluster_name",
-                        type="string",
-                        description="Optional cluster name to filter monitors by tag cluster_name:<name>",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="state",
-                        type="string",
-                        description="Monitor state to filter on: Alert, Warn, No Data (default: Alert)",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="service",
-                        type="string",
-                        description=(
-                            "Optional Datadog service tag to filter monitors "
-                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                        ToolParam(
+                            name="to_ts",
+                            type="integer",
+                            description="Unix timestamp for the end of the query window (defaults to now)",
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="env",
-                        type="string",
-                        description=(
-                            "Optional Datadog environment tag to filter monitors "
-                            "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                        ToolParam(
+                            name="service",
+                            type="string",
+                            description=(
+                                "Optional Datadog service tag to narrow the query "
+                                "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                            ),
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({DATADOG}),
-                execute=lambda cluster_name="", state="Alert",
-                        service=None, env=None,
-                        _dd=_dd_config: get_datadog_monitors(
-                    cluster_name=cluster_name, state=state, service=service, env=env, config=_dd,
-                ),
-            ),
-            ToolDef(
-                name="get_datadog_service_catalog",
-                description=(
-                    "Fetch service ownership metadata from the Datadog Service Catalog (Service Definition v2 API). "
-                    "Returns service name, team, language, and tier ownership metadata for a specific service. "
-                    "Always call this tool — provide service_name when resolved from Kubernetes pod labels, "
-                    "but call it even without service_name: the tool handles the empty case gracefully and "
-                    "returns guidance on how to resolve service identity. "
-                    "Resolve service_name from 'tags.datadoghq.com/service' pod labels first, "
-                    "then app.kubernetes.io/name, then app label, then deployment name. "
-                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="env",
-                        type="string",
-                        description="Datadog environment tag (e.g. production, staging) — default: production",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="cluster_name",
-                        type="string",
-                        description="Optional cluster name to include in the output header",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="service_name",
-                        type="string",
-                        description=(
-                            "Service name to filter catalog results. "
-                            "Resolve from Kubernetes pod labels in priority order: "
-                            "(1) tags.datadoghq.com/service label, "
-                            "(2) app.kubernetes.io/name label, "
-                            "(3) app label, "
-                            "(4) deployment or service name. "
-                            "If service_name cannot be resolved, call without it — "
-                            "the tool returns guidance on resolution."
+                        ToolParam(
+                            name="env",
+                            type="string",
+                            description=(
+                                "Optional Datadog environment tag to narrow the query "
+                                "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                            ),
+                            required=False,
                         ),
-                        required=False,
+                    ],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda cluster_name, metric="cpu", from_ts=0, to_ts=0, service=None, env=None, _dd=_dd_config, _gke=gke_config: (
+                        query_datadog_metrics(
+                            cluster_name=cluster_name,
+                            metric=metric,
+                            from_ts=from_ts,
+                            to_ts=to_ts,
+                            service=service,
+                            env=env,
+                            config=_dd,
+                            gke_config=_gke,
+                        )
                     ),
-                ],
-                categories=frozenset({DATADOG}),
-                execute=lambda env="production", cluster_name="",
-                        service_name=None,
-                        _dd=_dd_config: get_datadog_service_catalog(
-                    env=env, cluster_name=cluster_name, service_name=service_name, config=_dd,
                 ),
-            ),
-            ToolDef(
-                name="get_datadog_apm_services",
-                description=(
-                    "Fetch live APM trace metrics for a specific service from Datadog using Spans Events Search v2. "
-                    "Returns throughput, error rate, and avg latency from actual span data. "
-                    "Uses a fallback chain: POST /api/v2/spans/events/search → GET /api/v2/apm/traces/search → empty result with warning. "
-                    "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
-                    "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
-                    "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "
-                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="service_name",
-                        type="string",
-                        description=(
-                            "Service name to query APM trace metrics for. Strongly recommended. "
-                            "Must match the 'service' tag in Datadog APM. "
-                            "Resolve from Kubernetes pod labels in priority order: "
-                            "(1) tags.datadoghq.com/service label, "
-                            "(2) app.kubernetes.io/name label, "
-                            "(3) app label, "
-                            "(4) the deployment or service name from Kubernetes."
+                ToolDef(
+                    name="get_datadog_monitors",
+                    description=(
+                        "Fetch active Datadog monitors using the Datadog Monitors v1 API. "
+                        "Returns monitors filtered by state (default: Alert) and optionally "
+                        "by cluster name, service, and environment tags. Shows monitor ID, name, type, "
+                        "and current state. Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="cluster_name",
+                            type="string",
+                            description="Optional cluster name to filter monitors by tag cluster_name:<name>",
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="env",
-                        type="string",
-                        description=(
-                            "Datadog environment tag used to scope the APM query "
-                            "(e.g. production, staging) — default: production"
+                        ToolParam(
+                            name="state",
+                            type="string",
+                            description="Monitor state to filter on: Alert, Warn, No Data (default: Alert)",
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="hours_back",
-                        type="number",
-                        description=(
-                            "Lookback window in hours for the APM query. "
-                            "Defaults to 1 hour. Use fractional values for sub-hour windows "
-                            "(e.g. 0.5 for 30 minutes, 4 for 4 hours)."
+                        ToolParam(
+                            name="service",
+                            type="string",
+                            description=(
+                                "Optional Datadog service tag to filter monitors "
+                                "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                            ),
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({DATADOG}),
-                execute=lambda service_name="", env="production", hours_back=1.0,
-                        _dd=_dd_config: get_datadog_apm_services(
-                    service_name=service_name, env=env, hours_back=hours_back, config=_dd,
-                ),
-            ),
-            ToolDef(
-                name="get_datadog_service_dependencies",
-                description=(
-                    "Fetch upstream and downstream service dependencies from the Datadog Service Dependencies v1 API. "
-                    "Returns which services this service calls (downstream) and which services call it (upstream). "
-                    "Requires service_name — resolve from Kubernetes pod labels before calling. "
-                    "Also emits structured DependencyEdge data for dependency graph rendering. "
-                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="service_name",
-                        type="string",
-                        description=(
-                            "Service name to look up dependencies for. Required — must match the "
-                            "'service' tag in Datadog APM. Resolve from Kubernetes pod labels: "
-                            "(1) tags.datadoghq.com/service, "
-                            "(2) app.kubernetes.io/name, "
-                            "(3) app label, "
-                            "(4) deployment or service name."
+                        ToolParam(
+                            name="env",
+                            type="string",
+                            description=(
+                                "Optional Datadog environment tag to filter monitors "
+                                "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                            ),
+                            required=False,
                         ),
+                    ],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda cluster_name="", state="Alert", service=None, env=None, _dd=_dd_config: (
+                        get_datadog_monitors(
+                            cluster_name=cluster_name,
+                            state=state,
+                            service=service,
+                            env=env,
+                            config=_dd,
+                        )
                     ),
-                ],
-                categories=frozenset({DATADOG}),
-                execute=lambda service_name,
-                        _dd=_dd_config: get_datadog_service_dependencies(
-                    service_name=service_name, config=_dd,
                 ),
-            ),
-            ToolDef(
-                name="diagnose_datadog_metrics",
-                description=(
-                    "Run a diagnostic probe against the Datadog API to discover available metrics "
-                    "and tag keys. Searches for kubernetes.* (infra) and trace.* (APM) metrics, "
-                    "discovers host tag keys, and provides suggestions for metric_mode configuration. "
-                    "Use this FIRST when Datadog metric queries return empty results — the diagnostic "
-                    "output explains what metrics exist and what tags are available. "
-                    "Read-only — does not modify any resources."
+                ToolDef(
+                    name="get_datadog_service_catalog",
+                    description=(
+                        "Fetch service ownership metadata from the Datadog Service Catalog (Service Definition v2 API). "
+                        "Returns service name, team, language, and tier ownership metadata for a specific service. "
+                        "Always call this tool — provide service_name when resolved from Kubernetes pod labels, "
+                        "but call it even without service_name: the tool handles the empty case gracefully and "
+                        "returns guidance on how to resolve service identity. "
+                        "Resolve service_name from 'tags.datadoghq.com/service' pod labels first, "
+                        "then app.kubernetes.io/name, then app label, then deployment name. "
+                        "Results are cached for 60 seconds. Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="env",
+                            type="string",
+                            description="Datadog environment tag (e.g. production, staging) — default: production",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="cluster_name",
+                            type="string",
+                            description="Optional cluster name to include in the output header",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="service_name",
+                            type="string",
+                            description=(
+                                "Service name to filter catalog results. "
+                                "Resolve from Kubernetes pod labels in priority order: "
+                                "(1) tags.datadoghq.com/service label, "
+                                "(2) app.kubernetes.io/name label, "
+                                "(3) app label, "
+                                "(4) deployment or service name. "
+                                "If service_name cannot be resolved, call without it — "
+                                "the tool returns guidance on resolution."
+                            ),
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda env="production", cluster_name="", service_name=None, _dd=_dd_config: (
+                        get_datadog_service_catalog(
+                            env=env,
+                            cluster_name=cluster_name,
+                            service_name=service_name,
+                            config=_dd,
+                        )
+                    ),
                 ),
-                parameters=[],
-                categories=frozenset({DATADOG}),
-                execute=lambda _dd=_dd_config: diagnose_datadog_metrics(config=_dd),
-            ),
-        ])
+                ToolDef(
+                    name="get_datadog_apm_services",
+                    description=(
+                        "Fetch live APM trace metrics for a specific service from Datadog using Spans Events Search v2. "
+                        "Returns throughput, error rate, and avg latency from actual span data. "
+                        "Uses a fallback chain: POST /api/v2/spans/events/search → GET /api/v2/apm/traces/search → empty result with warning. "
+                        "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
+                        "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
+                        "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "
+                        "Results are cached for 60 seconds. Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="service_name",
+                            type="string",
+                            description=(
+                                "Service name to query APM trace metrics for. Strongly recommended. "
+                                "Must match the 'service' tag in Datadog APM. "
+                                "Resolve from Kubernetes pod labels in priority order: "
+                                "(1) tags.datadoghq.com/service label, "
+                                "(2) app.kubernetes.io/name label, "
+                                "(3) app label, "
+                                "(4) the deployment or service name from Kubernetes."
+                            ),
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="env",
+                            type="string",
+                            description=(
+                                "Datadog environment tag used to scope the APM query "
+                                "(e.g. production, staging) — default: production"
+                            ),
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="hours_back",
+                            type="number",
+                            description=(
+                                "Lookback window in hours for the APM query. "
+                                "Defaults to 1 hour. Use fractional values for sub-hour windows "
+                                "(e.g. 0.5 for 30 minutes, 4 for 4 hours)."
+                            ),
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda service_name="", env="production", hours_back=1.0, _dd=_dd_config: (
+                        get_datadog_apm_services(
+                            service_name=service_name,
+                            env=env,
+                            hours_back=hours_back,
+                            config=_dd,
+                        )
+                    ),
+                ),
+                ToolDef(
+                    name="get_datadog_service_dependencies",
+                    description=(
+                        "Fetch upstream and downstream service dependencies from the Datadog Service Dependencies v1 API. "
+                        "Returns which services this service calls (downstream) and which services call it (upstream). "
+                        "Requires service_name — resolve from Kubernetes pod labels before calling. "
+                        "Also emits structured DependencyEdge data for dependency graph rendering. "
+                        "Results are cached for 60 seconds. Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="service_name",
+                            type="string",
+                            description=(
+                                "Service name to look up dependencies for. Required — must match the "
+                                "'service' tag in Datadog APM. Resolve from Kubernetes pod labels: "
+                                "(1) tags.datadoghq.com/service, "
+                                "(2) app.kubernetes.io/name, "
+                                "(3) app label, "
+                                "(4) deployment or service name."
+                            ),
+                        ),
+                    ],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda service_name, _dd=_dd_config: get_datadog_service_dependencies(
+                        service_name=service_name,
+                        config=_dd,
+                    ),
+                ),
+                ToolDef(
+                    name="diagnose_datadog_metrics",
+                    description=(
+                        "Run a diagnostic probe against the Datadog API to discover available metrics "
+                        "and tag keys. Searches for kubernetes.* (infra) and trace.* (APM) metrics, "
+                        "discovers host tag keys, and provides suggestions for metric_mode configuration. "
+                        "Use this FIRST when Datadog metric queries return empty results — the diagnostic "
+                        "output explains what metrics exist and what tags are available. "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[],
+                    categories=frozenset({DATADOG}),
+                    execute=lambda _dd=_dd_config: diagnose_datadog_metrics(config=_dd),
+                ),
+            ]
+        )
     else:
         logger.debug(
-            "Datadog API tools skipped (enabled=False). "
-            "Set datadog.enabled=true or provide API keys to enable."
+            "Datadog API tools skipped (enabled=False). Set datadog.enabled=true or provide API keys to enable."
         )
 
     # ── Argo Rollouts tools (auto-detect or explicit toggle) ──
@@ -1866,174 +1922,168 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             logger.info("Argo Rollouts CRD detected — registering Rollout tools.")
         else:
             logger.debug(
-                "Argo Rollouts CRD not found — skipping rollout tools. "
-                "Set argo_rollouts_enabled=true to force-enable."
+                "Argo Rollouts CRD not found — skipping rollout tools. Set argo_rollouts_enabled=true to force-enable."
             )
 
     if _argo_rollouts_active:
-        tools.extend([
-            ToolDef(
-                name="kubectl_get_rollout",
-                description=(
-                    "List or inspect Argo Rollout resources in the cluster using the "
-                    "Argo Rollouts CRD API (argoproj.io/v1alpha1). "
-                    "Returns phase, replica counts (desired/ready/available/updated), "
-                    "strategy (canary step index and weight, or blueGreen active/preview RS), "
-                    "and condition messages. "
-                    "Use without 'name' to list all Rollouts in a namespace; provide 'name' "
-                    "for a single Rollout. "
-                    "Use this BEFORE investigating pod failures in Rollout-managed workloads — "
-                    "Rollouts replace Deployments and are the authoritative source of rollout state. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace to query (default: all namespaces)",
-                        required=False,
+        tools.extend(
+            [
+                ToolDef(
+                    name="kubectl_get_rollout",
+                    description=(
+                        "List or inspect Argo Rollout resources in the cluster using the "
+                        "Argo Rollouts CRD API (argoproj.io/v1alpha1). "
+                        "Returns phase, replica counts (desired/ready/available/updated), "
+                        "strategy (canary step index and weight, or blueGreen active/preview RS), "
+                        "and condition messages. "
+                        "Use without 'name' to list all Rollouts in a namespace; provide 'name' "
+                        "for a single Rollout. "
+                        "Use this BEFORE investigating pod failures in Rollout-managed workloads — "
+                        "Rollouts replace Deployments and are the authoritative source of rollout state. "
+                        "Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="name",
-                        type="string",
-                        description="Rollout name; omit to list all Rollouts in the namespace",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({ARGO_ROLLOUTS}),
-                execute=lambda namespace="", name="",
-                        _cfg=gke_config: kubectl_get_rollout(
-                    namespace=namespace, name=name,
-                ),
-            ),
-            ToolDef(
-                name="kubectl_get_analysisrun",
-                description=(
-                    "List or inspect Argo Rollouts AnalysisRun resources "
-                    "(argoproj.io/v1alpha1). "
-                    "Returns phase (Running/Successful/Failed/Error), metric results, "
-                    "and error messages for each metric provider. "
-                    "Use to diagnose why a canary or blueGreen rollout was paused or "
-                    "aborted due to a failing analysis. "
-                    "Use without 'name' to list all AnalysisRuns in a namespace. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace to query (default: all namespaces)",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="name",
-                        type="string",
-                        description="AnalysisRun name; omit to list all AnalysisRuns in the namespace",
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({ARGO_ROLLOUTS}),
-                execute=lambda namespace="", name="",
-                        _cfg=gke_config: kubectl_get_analysisrun(
-                    namespace=namespace, name=name,
-                ),
-            ),
-            ToolDef(
-                name="kubectl_get_analysistemplate",
-                description=(
-                    "List or inspect Argo Rollouts AnalysisTemplate resources "
-                    "(argoproj.io/v1alpha1). "
-                    "Returns template name, namespace, and the list of defined metrics "
-                    "with their provider types (Prometheus, Web, Job, Datadog, etc.). "
-                    "Use to understand what analysis criteria are used by rollouts in "
-                    "a namespace before investigating a failed AnalysisRun. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace to query (default: all namespaces)",
-                        required=False,
-                    ),
-                    ToolParam(
-                        name="name",
-                        type="string",
-                        description=(
-                            "AnalysisTemplate name; omit to list all templates in the namespace"
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace to query (default: all namespaces)",
+                            required=False,
                         ),
-                        required=False,
-                    ),
-                ],
-                categories=frozenset({ARGO_ROLLOUTS}),
-                execute=lambda namespace="", name="",
-                        _cfg=gke_config: kubectl_get_analysistemplate(
-                    namespace=namespace, name=name,
-                ),
-            ),
-            ToolDef(
-                name="kubectl_get_cluster_analysis_template",
-                description=(
-                    "List or inspect Argo Rollouts ClusterAnalysisTemplate resources "
-                    "(argoproj.io/v1alpha1). "
-                    "ClusterAnalysisTemplates are cluster-scoped (not namespace-bound) and define "
-                    "reusable analysis metrics (Prometheus, Datadog, Web, Job, etc.) that can be "
-                    "referenced by Rollouts across any namespace. "
-                    "Returns template name and the list of defined metrics with their provider types. "
-                    "Use to understand what cluster-wide analysis criteria are available before "
-                    "investigating a failed AnalysisRun. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="name",
-                        type="string",
-                        description=(
-                            "ClusterAnalysisTemplate name; omit to list all cluster-scoped templates"
+                        ToolParam(
+                            name="name",
+                            type="string",
+                            description="Rollout name; omit to list all Rollouts in the namespace",
+                            required=False,
                         ),
-                        required=False,
+                    ],
+                    categories=frozenset({ARGO_ROLLOUTS}),
+                    execute=lambda namespace="", name="", _cfg=gke_config: kubectl_get_rollout(
+                        namespace=namespace,
+                        name=name,
                     ),
-                ],
-                categories=frozenset({ARGO_ROLLOUTS}),
-                execute=lambda name="",
-                        _cfg=gke_config: kubectl_get_cluster_analysis_template(
-                    name=name,
                 ),
-            ),
-            ToolDef(
-                name="kubectl_get_experiment",
-                description=(
-                    "List or inspect Argo Rollouts Experiment resources "
-                    "(argoproj.io/v1alpha1). "
-                    "Experiments run multiple ReplicaSets simultaneously for A/B or canary testing, "
-                    "each with a defined template and replica count. "
-                    "Returns experiment name, namespace, phase (Running/Successful/Failed), "
-                    "and the list of templates with their replica counts. "
-                    "Use to debug active or failed canary experiments associated with a Rollout. "
-                    "Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Kubernetes namespace to query (default: all namespaces)",
-                        required=False,
+                ToolDef(
+                    name="kubectl_get_analysisrun",
+                    description=(
+                        "List or inspect Argo Rollouts AnalysisRun resources "
+                        "(argoproj.io/v1alpha1). "
+                        "Returns phase (Running/Successful/Failed/Error), metric results, "
+                        "and error messages for each metric provider. "
+                        "Use to diagnose why a canary or blueGreen rollout was paused or "
+                        "aborted due to a failing analysis. "
+                        "Use without 'name' to list all AnalysisRuns in a namespace. "
+                        "Read-only — does not modify any resources."
                     ),
-                    ToolParam(
-                        name="name",
-                        type="string",
-                        description=(
-                            "Experiment name; omit to list all experiments in the namespace"
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace to query (default: all namespaces)",
+                            required=False,
                         ),
-                        required=False,
+                        ToolParam(
+                            name="name",
+                            type="string",
+                            description="AnalysisRun name; omit to list all AnalysisRuns in the namespace",
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGO_ROLLOUTS}),
+                    execute=lambda namespace="", name="", _cfg=gke_config: kubectl_get_analysisrun(
+                        namespace=namespace,
+                        name=name,
                     ),
-                ],
-                categories=frozenset({ARGO_ROLLOUTS}),
-                execute=lambda namespace="", name="",
-                        _cfg=gke_config: kubectl_get_experiment(
-                    namespace=namespace, name=name,
                 ),
-            ),
-        ])
+                ToolDef(
+                    name="kubectl_get_analysistemplate",
+                    description=(
+                        "List or inspect Argo Rollouts AnalysisTemplate resources "
+                        "(argoproj.io/v1alpha1). "
+                        "Returns template name, namespace, and the list of defined metrics "
+                        "with their provider types (Prometheus, Web, Job, Datadog, etc.). "
+                        "Use to understand what analysis criteria are used by rollouts in "
+                        "a namespace before investigating a failed AnalysisRun. "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace to query (default: all namespaces)",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="name",
+                            type="string",
+                            description=("AnalysisTemplate name; omit to list all templates in the namespace"),
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGO_ROLLOUTS}),
+                    execute=lambda namespace="", name="", _cfg=gke_config: kubectl_get_analysistemplate(
+                        namespace=namespace,
+                        name=name,
+                    ),
+                ),
+                ToolDef(
+                    name="kubectl_get_cluster_analysis_template",
+                    description=(
+                        "List or inspect Argo Rollouts ClusterAnalysisTemplate resources "
+                        "(argoproj.io/v1alpha1). "
+                        "ClusterAnalysisTemplates are cluster-scoped (not namespace-bound) and define "
+                        "reusable analysis metrics (Prometheus, Datadog, Web, Job, etc.) that can be "
+                        "referenced by Rollouts across any namespace. "
+                        "Returns template name and the list of defined metrics with their provider types. "
+                        "Use to understand what cluster-wide analysis criteria are available before "
+                        "investigating a failed AnalysisRun. "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="name",
+                            type="string",
+                            description=("ClusterAnalysisTemplate name; omit to list all cluster-scoped templates"),
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGO_ROLLOUTS}),
+                    execute=lambda name="", _cfg=gke_config: kubectl_get_cluster_analysis_template(
+                        name=name,
+                    ),
+                ),
+                ToolDef(
+                    name="kubectl_get_experiment",
+                    description=(
+                        "List or inspect Argo Rollouts Experiment resources "
+                        "(argoproj.io/v1alpha1). "
+                        "Experiments run multiple ReplicaSets simultaneously for A/B or canary testing, "
+                        "each with a defined template and replica count. "
+                        "Returns experiment name, namespace, phase (Running/Successful/Failed), "
+                        "and the list of templates with their replica counts. "
+                        "Use to debug active or failed canary experiments associated with a Rollout. "
+                        "Read-only — does not modify any resources."
+                    ),
+                    parameters=[
+                        ToolParam(
+                            name="namespace",
+                            type="string",
+                            description="Kubernetes namespace to query (default: all namespaces)",
+                            required=False,
+                        ),
+                        ToolParam(
+                            name="name",
+                            type="string",
+                            description=("Experiment name; omit to list all experiments in the namespace"),
+                            required=False,
+                        ),
+                    ],
+                    categories=frozenset({ARGO_ROLLOUTS}),
+                    execute=lambda namespace="", name="", _cfg=gke_config: kubectl_get_experiment(
+                        namespace=namespace,
+                        name=name,
+                    ),
+                ),
+            ]
+        )
 
     return tools

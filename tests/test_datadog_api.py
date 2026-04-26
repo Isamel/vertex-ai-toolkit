@@ -757,9 +757,7 @@ class TestGetDatadogServiceCatalogLabelFilters:
 
         clear_discovery_cache()
 
-    def test_service_name_filter_returns_only_matching_service(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_service_name_filter_returns_only_matching_service(self, dd_config: DatadogAPIConfig) -> None:
         """When service_name is provided, only the matching service is returned."""
         from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
@@ -787,9 +785,7 @@ class TestGetDatadogServiceCatalogLabelFilters:
         assert "Service filter: frontend" in result.output
         assert "Total services: 1" in result.output
 
-    def test_service_name_filter_no_match_returns_no_services(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_service_name_filter_no_match_returns_no_services(self, dd_config: DatadogAPIConfig) -> None:
         """When service_name matches nothing, returns 'no service catalog entries found'."""
         from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
@@ -810,9 +806,7 @@ class TestGetDatadogServiceCatalogLabelFilters:
         assert result.error is False
         assert "No service catalog entries found." in result.output
 
-    def test_backward_compat_no_service_name_returns_all(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_backward_compat_no_service_name_returns_all(self, dd_config: DatadogAPIConfig) -> None:
         """Without service_name, all services are returned (backward compat)."""
         from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
@@ -958,7 +952,11 @@ class TestConfigurableLabelsTagFilter:
             labels=DatadogLabelConfig(custom={"team": "platform", "region": "us-east"}),
         )
         tag_filter, err = _build_tag_filter(
-            "my-cluster", "my-svc", "prod", config, include_custom_labels=False,
+            "my-cluster",
+            "my-svc",
+            "prod",
+            config,
+            include_custom_labels=False,
         )
 
         assert err is None
@@ -980,7 +978,11 @@ class TestConfigurableLabelsTagFilter:
             labels=DatadogLabelConfig(custom={"team": "platform"}),
         )
         tag_filter, err = _build_tag_filter(
-            "my-cluster", None, None, config, include_custom_labels=True,
+            "my-cluster",
+            None,
+            None,
+            config,
+            include_custom_labels=True,
         )
 
         assert err is None
@@ -1241,9 +1243,7 @@ class TestDetectionConfigMetadata:
         labels: dict[str, str] = {}
 
         mock_settings = MagicMock()
-        mock_settings.datadog.detection = DatadogDetectionConfig(
-            annotation_prefixes=["custom.prefix/"]
-        )
+        mock_settings.datadog.detection = DatadogDetectionConfig(annotation_prefixes=["custom.prefix/"])
 
         with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
             dd_ann, _ = _extract_dd_metadata(annotations, labels)
@@ -1263,9 +1263,7 @@ class TestDetectionConfigMetadata:
         }
 
         mock_settings = MagicMock()
-        mock_settings.datadog.detection = DatadogDetectionConfig(
-            label_prefix="myorg.datadoghq.com/"
-        )
+        mock_settings.datadog.detection = DatadogDetectionConfig(label_prefix="myorg.datadoghq.com/")
 
         with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
             _, dd_lbl = _extract_dd_metadata(annotations, labels)
@@ -1351,9 +1349,7 @@ class TestDetectionConfigEnvVars:
         deploy = self._make_deploy_with_env({"MY_CUSTOM_DD_FLAG": "true"})
 
         mock_settings = MagicMock()
-        mock_settings.datadog.detection = DatadogDetectionConfig(
-            env_vars=["MY_CUSTOM_DD_FLAG"]
-        )
+        mock_settings.datadog.detection = DatadogDetectionConfig(env_vars=["MY_CUSTOM_DD_FLAG"])
 
         with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
             result = _scan_deployment_for_datadog(deploy)
@@ -1560,9 +1556,7 @@ class TestSDKFunctionsSSLError:
 
     # ── query_datadog_metrics ─────────────────────────────────
 
-    def test_query_datadog_metrics_ssl_error_returns_helpful_message(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_query_datadog_metrics_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
         """ssl.SSLError from the metrics SDK call returns a helpful ToolResult."""
         import ssl
 
@@ -1584,9 +1578,7 @@ class TestSDKFunctionsSSLError:
         for phrase in self._SSL_HELP_PHRASES:
             assert phrase in result.output, f"Missing phrase {phrase!r} in output: {result.output}"
 
-    def test_query_datadog_metrics_ssl_error_contains_all_three_suggestions(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_query_datadog_metrics_ssl_error_contains_all_three_suggestions(self, dd_config: DatadogAPIConfig) -> None:
         """The ssl.SSLError message contains all 3 numbered fix suggestions."""
         import ssl
 
@@ -1617,9 +1609,7 @@ class TestSDKFunctionsSSLError:
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
         ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/query", reason=ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/query", reason=ssl_reason)
         mock_api = MagicMock()
         mock_api.query_metrics.side_effect = max_retry_exc
 
@@ -1635,9 +1625,7 @@ class TestSDKFunctionsSSLError:
 
     # ── get_datadog_monitors ──────────────────────────────────
 
-    def test_get_datadog_monitors_ssl_error_returns_helpful_message(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_get_datadog_monitors_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
         """ssl.SSLError from the monitors SDK call returns a helpful ToolResult."""
         import ssl
 
@@ -1658,9 +1646,7 @@ class TestSDKFunctionsSSLError:
         for phrase in self._SSL_HELP_PHRASES:
             assert phrase in result.output, f"Missing phrase {phrase!r} in output: {result.output}"
 
-    def test_get_datadog_monitors_ssl_error_contains_all_three_suggestions(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_get_datadog_monitors_ssl_error_contains_all_three_suggestions(self, dd_config: DatadogAPIConfig) -> None:
         """The ssl.SSLError message for monitors contains all 3 numbered fix suggestions."""
         import ssl
 
@@ -1690,9 +1676,7 @@ class TestSDKFunctionsSSLError:
         from vaig.tools.gke.datadog_api import get_datadog_monitors
 
         ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/monitor", reason=ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/monitor", reason=ssl_reason)
         mock_api = MagicMock()
         mock_api.list_monitors.side_effect = max_retry_exc
 
@@ -1708,9 +1692,7 @@ class TestSDKFunctionsSSLError:
 
     # ── get_datadog_service_catalog ───────────────────────────
 
-    def test_get_datadog_service_catalog_ssl_error_returns_helpful_message(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_get_datadog_service_catalog_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
         """ssl.SSLError from the service catalog SDK call returns a helpful ToolResult."""
         import ssl
 
@@ -1781,18 +1763,14 @@ class TestSDKFunctionsSSLError:
 
     # ── Non-SSL MaxRetryError (Fix 2) ─────────────────────────
 
-    def test_query_datadog_metrics_non_ssl_maxretry_returns_error_result(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_query_datadog_metrics_non_ssl_maxretry_returns_error_result(self, dd_config: DatadogAPIConfig) -> None:
         """MaxRetryError with a non-SSL reason returns ToolResult(error=True) with 'multiple retries'."""
         import urllib3.exceptions
 
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
         non_ssl_reason = ConnectionError("timed out")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason)
         mock_api = MagicMock()
         mock_api.query_metrics.side_effect = max_retry_exc
 
@@ -1806,18 +1784,14 @@ class TestSDKFunctionsSSLError:
         assert result.error is True
         assert "multiple retries" in result.output
 
-    def test_get_datadog_monitors_non_ssl_maxretry_returns_error_result(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_get_datadog_monitors_non_ssl_maxretry_returns_error_result(self, dd_config: DatadogAPIConfig) -> None:
         """MaxRetryError with a non-SSL reason returns ToolResult(error=True) with 'multiple retries'."""
         import urllib3.exceptions
 
         from vaig.tools.gke.datadog_api import get_datadog_monitors
 
         non_ssl_reason = ConnectionError("timed out")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/monitor", reason=non_ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/monitor", reason=non_ssl_reason)
         mock_api = MagicMock()
         mock_api.list_monitors.side_effect = max_retry_exc
 
@@ -1943,9 +1917,7 @@ class TestDatadogSSLConfig:
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
         ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/query", reason=ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/query", reason=ssl_reason)
         # Probe succeeds (returns data) so _detect_apm_operation finds an operation;
         # the SSL error occurs on the subsequent metric query call.
         probe_resp = MagicMock()
@@ -1976,9 +1948,7 @@ class TestDatadogSSLConfig:
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
         non_ssl_reason = ConnectionError("timed out")
-        max_retry_exc = urllib3.exceptions.MaxRetryError(
-            pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason
-        )
+        max_retry_exc = urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason)
         # Probe succeeds so _detect_apm_operation finds an operation;
         # the connection error occurs on the subsequent metric query call.
         probe_resp = MagicMock()
@@ -2067,8 +2037,7 @@ class TestDatadogSSLConfig:
                 _get_dd_api_client(cfg)
 
         assert ssl_attrs_written == [], (
-            f"ssl_verify=True must not trigger any write to {ssl_attrs_written} "
-            "on the SDK Configuration object"
+            f"ssl_verify=True must not trigger any write to {ssl_attrs_written} on the SDK Configuration object"
         )
 
     def test_empty_result_when_all_metrics_empty(self, dd_config: DatadogAPIConfig) -> None:
@@ -2194,9 +2163,7 @@ class TestDatadogSSLConfig:
         assert mock_api1.query_metrics.call_count >= 1
         assert mock_api2.query_metrics.call_count >= 1
 
-    def test_empty_service_name_returns_guidance_not_error(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_empty_service_name_returns_guidance_not_error(self, dd_config: DatadogAPIConfig) -> None:
         """When service_name is omitted or empty, the tool returns guidance (not an error).
 
         This allows the LLM to call the tool speculatively and receive instructions on
@@ -2419,9 +2386,20 @@ class TestBuildMetricTemplatesBothMode:
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="both")
         templates = _build_metric_templates(config)
 
-        expected_keys = {"cpu", "memory", "restarts", "network_in", "network_out",
-                         "disk_read", "disk_write", "requests", "errors", "latency",
-                         "error_rate", "apdex"}
+        expected_keys = {
+            "cpu",
+            "memory",
+            "restarts",
+            "network_in",
+            "network_out",
+            "disk_read",
+            "disk_write",
+            "requests",
+            "errors",
+            "latency",
+            "error_rate",
+            "apdex",
+        }
         assert expected_keys.issubset(templates.keys())
 
     def test_k8s_agent_mode_excludes_apm_keys(self) -> None:
@@ -2485,9 +2463,7 @@ class TestBothModePerMetricCustomLabels:
     ``config.custom_metrics`` are guaranteed to include custom labels.
     """
 
-    def test_both_mode_k8s_metric_includes_custom_labels_on_first_attempt(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_both_mode_k8s_metric_includes_custom_labels_on_first_attempt(self, dd_config: DatadogAPIConfig) -> None:
         """In both mode, built-in k8s metrics (cpu) include custom labels on first attempt.
 
         kubernetes.* templates carry user-defined custom labels on the initial query;
@@ -2563,9 +2539,7 @@ class TestBothModePerMetricCustomLabels:
         query_str = call_kwargs.get("query", "")
         assert "team:" not in query_str
 
-    def test_both_mode_memory_metric_includes_custom_labels_on_first_attempt(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_both_mode_memory_metric_includes_custom_labels_on_first_attempt(self, dd_config: DatadogAPIConfig) -> None:
         """In both mode, built-in 'memory' (kubernetes.*) metric includes custom labels on first attempt."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
@@ -2684,9 +2658,7 @@ class TestClusterNameOverride:
         dd_config.cluster_name_override = "override-cluster"
 
         mock_api = MagicMock()
-        mock_api.query_metrics.return_value = MagicMock(
-            series=[_make_series(scope="cluster_name:override-cluster")]
-        )
+        mock_api.query_metrics.return_value = MagicMock(series=[_make_series(scope="cluster_name:override-cluster")])
 
         with patch.dict("sys.modules", _make_dd_modules()):
             result = query_datadog_metrics(
@@ -2708,9 +2680,7 @@ class TestClusterNameOverride:
         assert dd_config.cluster_name_override == ""
 
         mock_api = MagicMock()
-        mock_api.query_metrics.return_value = MagicMock(
-            series=[_make_series(scope="cluster_name:my-cluster")]
-        )
+        mock_api.query_metrics.return_value = MagicMock(series=[_make_series(scope="cluster_name:my-cluster")])
 
         with patch.dict("sys.modules", _make_dd_modules()):
             result = query_datadog_metrics(
@@ -2728,6 +2698,123 @@ class TestClusterNameOverride:
         """DatadogAPIConfig.cluster_name_override defaults to empty string."""
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
         assert config.cluster_name_override == ""
+
+
+# ── _resolve_effective_cluster priority chain ────────────────
+
+
+class TestResolveEffectiveCluster:
+    """Tests for _resolve_effective_cluster 3-tier priority chain."""
+
+    def test_override_wins_over_all(self) -> None:
+        """cluster_name_override always takes precedence over DaemonSet and GKE name."""
+        from vaig.tools.gke.datadog_api import _resolve_effective_cluster
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        config.cluster_name_override = "explicit-override"
+
+        # Even with a GKE config that would trigger a probe, override wins.
+        result = _resolve_effective_cluster("gke-cluster", config, gke_config=None)
+        assert result == "explicit-override"
+
+    def test_daemonset_detection_used_when_override_empty(self) -> None:
+        """When override is empty, auto-detected DaemonSet cluster name is used."""
+        from vaig.tools.gke.datadog_api import _resolve_effective_cluster
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.cluster_name_override == ""
+
+        mock_gke_config = MagicMock()
+        mock_apps_v1 = MagicMock()
+        mock_clients = (MagicMock(), mock_apps_v1, MagicMock(), MagicMock())
+
+        with (
+            patch("vaig.tools.gke._clients._create_k8s_clients", return_value=mock_clients),
+            patch(
+                "vaig.tools.gke.datadog_api._probe_daemonset_cluster_name",
+                return_value="dd-detected-cluster",
+            ),
+        ):
+            result = _resolve_effective_cluster("gke-cluster", config, gke_config=mock_gke_config)
+
+        assert result == "dd-detected-cluster"
+
+    def test_gke_name_fallback_when_daemonset_returns_empty(self) -> None:
+        """Falls back to GKE cluster name when DaemonSet probe returns empty string."""
+        from vaig.tools.gke.datadog_api import _resolve_effective_cluster
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        mock_gke_config = MagicMock()
+        mock_apps_v1 = MagicMock()
+        mock_clients = (MagicMock(), mock_apps_v1, MagicMock(), MagicMock())
+
+        with (
+            patch("vaig.tools.gke._clients._create_k8s_clients", return_value=mock_clients),
+            patch("vaig.tools.gke.datadog_api._probe_daemonset_cluster_name", return_value=""),
+        ):
+            result = _resolve_effective_cluster("gke-cluster", config, gke_config=mock_gke_config)
+
+        assert result == "gke-cluster"
+
+    def test_gke_name_used_when_no_gke_config(self) -> None:
+        """When gke_config is None, skip the probe and use the GKE cluster name."""
+        from vaig.tools.gke.datadog_api import _resolve_effective_cluster
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+
+        with patch("vaig.tools.gke.datadog_api._probe_daemonset_cluster_name") as mock_probe:
+            result = _resolve_effective_cluster("gke-cluster", config, gke_config=None)
+
+        mock_probe.assert_not_called()
+        assert result == "gke-cluster"
+
+    def test_probe_error_falls_through_to_gke_name(self) -> None:
+        """When k8s client creation fails (ToolResult), GKE cluster name is used."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.datadog_api import _resolve_effective_cluster
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        mock_gke_config = MagicMock()
+        error_result = ToolResult(output="k8s unavailable", error=True)
+
+        with patch("vaig.tools.gke._clients._create_k8s_clients", return_value=error_result):
+            result = _resolve_effective_cluster("gke-cluster", config, gke_config=mock_gke_config)
+
+        assert result == "gke-cluster"
+
+    def test_failed_probe_not_cached(self) -> None:
+        """A failed probe (returns empty) is not cached — next call retries."""
+        from vaig.tools.gke import _cache
+        from vaig.tools.gke.datadog_api import _probe_daemonset_cluster_name
+
+        mock_apps_v1 = MagicMock()
+        cache_key = f"_dd_cluster_name:{id(mock_apps_v1)}"
+
+        _cache.clear_discovery_cache()
+        with patch("vaig.tools.gke.datadog._check_datadog_agent", return_value={"cluster_name": ""}):
+            first = _probe_daemonset_cluster_name(mock_apps_v1)
+
+        assert first == ""
+        assert _cache._get_cached(cache_key) is None
+
+    def test_successful_probe_cached(self) -> None:
+        """A successful probe is cached so the DaemonSet is only read once."""
+        from vaig.tools.gke import _cache
+        from vaig.tools.gke.datadog_api import _probe_daemonset_cluster_name
+
+        mock_apps_v1 = MagicMock()
+        _cache.clear_discovery_cache()
+
+        with patch(
+            "vaig.tools.gke.datadog._check_datadog_agent",
+            return_value={"cluster_name": "prod-cluster"},
+        ) as mock_check:
+            first = _probe_daemonset_cluster_name(mock_apps_v1)
+            second = _probe_daemonset_cluster_name(mock_apps_v1)
+
+        assert first == "prod-cluster"
+        assert second == "prod-cluster"
+        mock_check.assert_called_once()
 
 
 # ── Problem 3: default_lookback_hours ────────────────────────
@@ -2764,9 +2851,7 @@ class TestDefaultLookbackHours:
         ]
         return mock_api
 
-    def test_default_lookback_hours_from_config_used_when_no_hours_back(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_default_lookback_hours_from_config_used_when_no_hours_back(self, dd_config: DatadogAPIConfig) -> None:
         """When hours_back is not passed, config.default_lookback_hours is used."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
@@ -2785,9 +2870,7 @@ class TestDefaultLookbackHours:
         assert result.error is False
         assert "last 2 hours" in result.output
 
-    def test_explicit_hours_back_overrides_config_default(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_explicit_hours_back_overrides_config_default(self, dd_config: DatadogAPIConfig) -> None:
         """Explicit hours_back parameter takes priority over config.default_lookback_hours."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
@@ -2814,9 +2897,7 @@ class TestDefaultLookbackHours:
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
         assert config.default_lookback_hours == 4.0
 
-    def test_hours_back_none_resolves_to_config_default(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
+    def test_hours_back_none_resolves_to_config_default(self, dd_config: DatadogAPIConfig) -> None:
         """Passing hours_back=None explicitly uses config.default_lookback_hours."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
@@ -3161,9 +3242,7 @@ class TestDiscoverApmOperation:
         from vaig.tools.gke.datadog_api import _discover_apm_operation
 
         config = self._make_config()
-        api = self._make_api(
-            {"results": {"metrics": ["trace.django.request.hits", "trace.flask.request.hits"]}}
-        )
+        api = self._make_api({"results": {"metrics": ["trace.django.request.hits", "trace.flask.request.hits"]}})
 
         result = _discover_apm_operation(api, "my-svc", "prod", config)
 
@@ -3200,9 +3279,7 @@ class TestDiscoverApmOperation:
         from vaig.tools.gke.datadog_api import _discover_apm_operation
 
         config = self._make_config()
-        api = self._make_api(
-            {"results": {"metrics": ["custom.metric.count", "not.a.trace.metric"]}}
-        )
+        api = self._make_api({"results": {"metrics": ["custom.metric.count", "not.a.trace.metric"]}})
 
         result = _discover_apm_operation(api, "my-svc", "prod", config)
 
@@ -3218,7 +3295,6 @@ class TestDiscoverApmOperation:
         result = _discover_apm_operation(api, "my-svc", "prod", config)
 
         assert result is None
-
 
     def test_discover_includes_env_in_query(self) -> None:
         """_discover_apm_operation must include env in the search query."""
@@ -3262,8 +3338,10 @@ class TestRetryOnlyCacheSource:
         import time as _time
 
         from vaig.tools.gke.datadog_api import _run_apm_queries
+
         now = int(_time.time())
         from vaig.tools.gke._cache import _cache_key_discovery
+
         return _run_apm_queries(
             mock_api,
             "my-svc",
@@ -3340,16 +3418,24 @@ class TestRetryOnlyCacheSource:
         mock_api = MagicMock()
         # First 3: APM queries for cached op (all empty), then probe + 3 APM queries on retry
         mock_api.query_metrics.side_effect = [
-            empty_resp, empty_resp, empty_resp,  # first run: all empty
-            hit_resp,                             # probe: envoy.proxy wins
-            hit_resp, empty_resp, empty_resp,     # retry run: hits only
+            empty_resp,
+            empty_resp,
+            empty_resp,  # first run: all empty
+            hit_resp,  # probe: envoy.proxy wins
+            hit_resp,
+            empty_resp,
+            empty_resp,  # retry run: hits only
         ]
 
         now = int(_time.time())
         result = _run_apm_queries(
-            mock_api, service, env,
+            mock_api,
+            service,
+            env,
             f"service:{service},env:{env}",
-            now - 3600, now, 1.0,
+            now - 3600,
+            now,
+            1.0,
             _cache_key_discovery("dd_apm", service, env),
             config,
         )
@@ -3417,13 +3503,13 @@ class TestRunApmQueriesInvalidation:
         # Then cache is invalidated, _detect_apm_operation is called → probe "envoy.proxy" → hit_resp
         # 2nd run: 3 more queries using "envoy.proxy" → hit_resp for hits, empty for errors/duration
         mock_api.query_metrics.side_effect = [
-            empty_resp,   # hits query for envoy.envoy → empty
-            empty_resp,   # errors query for envoy.envoy → empty
-            empty_resp,   # duration query for envoy.envoy → empty
-            hit_resp,     # probe for envoy.proxy (first in probe order) → hit
-            hit_resp,     # hits query for envoy.proxy
-            empty_resp,   # errors query for envoy.proxy → empty (N/A ok)
-            empty_resp,   # duration query for envoy.proxy → empty (N/A ok)
+            empty_resp,  # hits query for envoy.envoy → empty
+            empty_resp,  # errors query for envoy.envoy → empty
+            empty_resp,  # duration query for envoy.envoy → empty
+            hit_resp,  # probe for envoy.proxy (first in probe order) → hit
+            hit_resp,  # hits query for envoy.proxy
+            empty_resp,  # errors query for envoy.proxy → empty (N/A ok)
+            empty_resp,  # duration query for envoy.proxy → empty (N/A ok)
         ]
 
         result = _run_apm_queries(
@@ -3821,9 +3907,7 @@ class TestTagFilterFallback:
         dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
 
         mock_api = MagicMock()
-        mock_api.query_metrics.return_value = MagicMock(
-            series=[_make_series(scope="cluster_name:my-cluster")]
-        )
+        mock_api.query_metrics.return_value = MagicMock(series=[_make_series(scope="cluster_name:my-cluster")])
 
         with patch.dict("sys.modules", _make_dd_modules()):
             result = query_datadog_metrics(
@@ -4001,7 +4085,8 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="my service; DROP TABLE", config=dd_config,
+                service_name="my service; DROP TABLE",
+                config=dd_config,
             )
 
         assert result.error is True
@@ -4019,7 +4104,9 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result.error is False
@@ -4044,7 +4131,9 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result.error is False
@@ -4082,7 +4171,9 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="isolated-svc", config=dd_config, _custom_api=mock_api,
+                service_name="isolated-svc",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result.error is False
@@ -4102,10 +4193,14 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result1 = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
             result2 = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result1.output == result2.output
@@ -4126,7 +4221,9 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result.error is True
@@ -4147,7 +4244,9 @@ class TestGetDatadogServiceDependencies:
             from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
 
             result = get_datadog_service_dependencies(
-                service_name="my-api", config=dd_config, _custom_api=mock_api,
+                service_name="my-api",
+                config=dd_config,
+                _custom_api=mock_api,
             )
 
         assert result.error is False
@@ -4412,8 +4511,7 @@ class TestDiagnoseDatadogMetrics:
 
         # Check that search URLs contain encoded query params (+ instead of spaces, %2A for *)
         search_calls = [
-            call_args for call_args in client.rest_client.request.call_args_list
-            if "/api/v1/search" in str(call_args)
+            call_args for call_args in client.rest_client.request.call_args_list if "/api/v1/search" in str(call_args)
         ]
         assert len(search_calls) >= 2  # kubernetes.* and trace.*
         for call_args in search_calls:
