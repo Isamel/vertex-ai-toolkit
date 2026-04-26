@@ -762,8 +762,10 @@ class TestFormatTimeSeriesNoneHandling:
         assert "Series 1" in result
 
     def test_series_cap_at_20(self) -> None:
-        """Output must be capped at 20 series to prevent context window overflow."""
-        from vaig.tools.gcloud_tools import _format_time_series
+        """Output must be capped at _FORMAT_MAX_SERIES to prevent context window overflow."""
+        from vaig.tools.gcloud_tools import _FORMAT_MAX_SERIES, _format_time_series
+
+        total = _FORMAT_MAX_SERIES * 2 + 10  # e.g. 50
 
         def _make_ts(i: int) -> MagicMock:
             ts = MagicMock()
@@ -774,21 +776,21 @@ class TestFormatTimeSeriesNoneHandling:
             ts.points = []
             return ts
 
-        series_list = [_make_ts(i) for i in range(50)]
+        series_list = [_make_ts(i) for i in range(total)]
         result = _format_time_series(series_list, "istio.io/service/server/request_count")
 
         # Should mention total count and cap
-        assert "50" in result
-        assert "showing first 20" in result
+        assert str(total) in result
+        assert f"showing first {_FORMAT_MAX_SERIES}" in result
         # Should mention the omitted series in the footer
-        assert "30 more series omitted" in result
-        # Should only contain Series 1..20, not Series 21+
-        assert "Series 20" in result
-        assert "Series 21" not in result
+        assert f"{total - _FORMAT_MAX_SERIES} more series omitted" in result
+        # Should only contain Series up to _FORMAT_MAX_SERIES, not beyond
+        assert f"Series {_FORMAT_MAX_SERIES}" in result
+        assert f"Series {_FORMAT_MAX_SERIES + 1}" not in result
 
     def test_hard_char_cap_at_50000(self) -> None:
-        """Output must be hard-capped at 50,000 chars to prevent context window overflow."""
-        from vaig.tools.gcloud_tools import _format_time_series
+        """Output must be strictly capped at _FORMAT_MAX_CHARS chars."""
+        from vaig.tools.gcloud_tools import _FORMAT_MAX_CHARS, _format_time_series
 
         # Build a single series with a point whose value produces a very long line
         point = MagicMock()
@@ -803,13 +805,14 @@ class TestFormatTimeSeriesNoneHandling:
         ts.metric.labels = {}
         ts.resource = MagicMock()
         ts.resource.labels = {}
-        # 20 points each with 10k chars → well over 50k total
+        # 20 points each with 10k chars → well over _FORMAT_MAX_CHARS total
         ts.points = [point] * 20
 
         series_list = [ts] * 20
         result = _format_time_series(series_list, "test.metric")
 
-        assert len(result) <= 50_000 + 200  # allow for truncation suffix
+        # Strict: total length must not exceed the cap (footer is trimmed to fit)
+        assert len(result) <= _FORMAT_MAX_CHARS
         assert "TRUNCATED" in result
 
 

@@ -7,12 +7,17 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
-from vaig.tools.categories import LOGGING
+from vaig.tools.categories import LOGGING, MONITORING
 
 if TYPE_CHECKING:
     from google.auth.credentials import Credentials
 
 logger = logging.getLogger(__name__)
+
+# ── Output caps for _format_time_series ─────────────────────
+# Promote to module level for testability and consistency.
+_FORMAT_MAX_SERIES: int = 20  # max time series to display
+_FORMAT_MAX_CHARS: int = 50_000  # hard char cap (~12,500 tokens)
 
 
 # ── Lazy SDK imports ─────────────────────────────────────────
@@ -240,14 +245,14 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
 
     # Cap series to avoid context window overflow (Istio metrics can return
     # thousands of series — one per source/destination/method/path combination).
-    _MAX_SERIES = 20
     total_series = len(time_series_list)
-    display_series = time_series_list[:_MAX_SERIES]
+    display_series = time_series_list[:_FORMAT_MAX_SERIES]
 
     lines: list[str] = []
     lines.append(f"Metric: {metric_type}")
     lines.append(
-        f"Series count: {total_series}" + (f" (showing first {_MAX_SERIES})" if total_series > _MAX_SERIES else "")
+        f"Series count: {total_series}"
+        + (f" (showing first {_FORMAT_MAX_SERIES})" if total_series > _FORMAT_MAX_SERIES else "")
     )
     lines.append("")
 
@@ -317,22 +322,22 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
 
         lines.append("")
 
-    if total_series > _MAX_SERIES:
+    if total_series > _FORMAT_MAX_SERIES:
         lines.append(
-            f"... and {total_series - _MAX_SERIES} more series omitted (cap={_MAX_SERIES}). Use aggregation= or a narrower filter_str to reduce cardinality."
+            f"... and {total_series - _FORMAT_MAX_SERIES} more series omitted (cap={_FORMAT_MAX_SERIES}). Use aggregation= or a narrower filter_str to reduce cardinality."
         )
         lines.append("")
 
     result = "\n".join(lines)
 
-    # Hard safety cap: 50,000 chars (~12,500 tokens) — prevents context window
-    # overflow when the model queries high-cardinality metrics without aggregation.
-    _MAX_CHARS = 50_000
-    if len(result) > _MAX_CHARS:
-        result = (
-            result[:_MAX_CHARS]
-            + f"\n\n[TRUNCATED: output exceeded {_MAX_CHARS} chars. Use aggregation= or a narrower filter_str.]"
+    # Hard safety cap — prevents context window overflow when the model queries
+    # high-cardinality metrics without aggregation. Trim BEFORE appending the
+    # truncation footer so the total length stays within _FORMAT_MAX_CHARS.
+    if len(result) > _FORMAT_MAX_CHARS:
+        _FOOTER = (
+            f"\n\n[TRUNCATED: output exceeded {_FORMAT_MAX_CHARS} chars. Use aggregation= or a narrower filter_str.]"
         )
+        result = result[: _FORMAT_MAX_CHARS - len(_FOOTER)] + _FOOTER
 
     return result
 
@@ -741,6 +746,6 @@ def create_gcloud_tools(
                     credentials=_dc,
                 )
             ),
-            categories=frozenset({LOGGING}),
+            categories=frozenset({MONITORING}),
         ),
     ]
