@@ -50,7 +50,10 @@ def _call_build(
         patch("vaig.cli.commands.live.resolve_attachment", return_value=fake, create=True),
         patch.object(AttachmentCache, "__init__", tracking_init),
     ):
+        from vaig.core.config import AttachmentsConfig
+
         _build_and_resolve_attachments(
+            base_config=AttachmentsConfig(cache_dir=cache_dir),
             attach_sources=["fake.zip"],
             attach_names=[],
             max_files=100,
@@ -62,10 +65,8 @@ def _call_build(
             max_bytes_absolute=10_000_000,
             allow_http=False,
             url_allowlist=[],
-            session_id=None,
+            session_id="dummy",
             cache_enabled=True,
-            cache_dir=cache_dir,
-            session_dir=None,
         )
 
 
