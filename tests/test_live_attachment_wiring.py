@@ -161,7 +161,7 @@ class TestLiveWithAttachLocalPath:
             # Intercept _build_and_resolve_attachments so we don't hit the filesystem
             patch(
                 "vaig.cli.commands.live._build_and_resolve_attachments",
-                return_value=[fake_adapter],
+                return_value=([fake_adapter], None),
             ),
             patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
             patch("vaig.core.container.build_container") as mock_container,
@@ -217,7 +217,7 @@ class TestLiveWithMultipleAttach:
             ),
             patch(
                 "vaig.cli.commands.live._build_and_resolve_attachments",
-                return_value=all_adapters,
+                return_value=(all_adapters, None),
             ),
             patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
             patch("vaig.core.container.build_container") as mock_container,

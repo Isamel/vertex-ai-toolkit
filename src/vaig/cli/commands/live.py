@@ -53,7 +53,7 @@ from vaig.skills.service_health.skill import ServiceHealthSkill
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.attachment_adapter import AttachmentAdapter
-    from vaig.core.config import GKEConfig, RepoInvestigationConfig, Settings
+    from vaig.core.config import AttachmentsConfig, GKEConfig, RepoInvestigationConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
     from vaig.skills.service_health.diff import ReportDiff
@@ -954,7 +954,8 @@ def register(app: typer.Typer) -> None:
             )
 
             # ── Attachment config + early resolution (SPEC-ATT-01..06) ───────
-            _attachment_adapters = _build_and_resolve_attachments(
+            _attachment_adapters, parsed_attach_cfg = _build_and_resolve_attachments(
+                base_config=settings.attachments,
                 attach_sources=attach or [],
                 attach_names=attach_name or [],
                 max_files=attach_max_files,
@@ -968,9 +969,12 @@ def register(app: typer.Typer) -> None:
                 url_allowlist=attach_allow_domain or [],
                 session_id=attach_session,
                 cache_enabled=attach_cache,
-                cache_dir=settings.attachments.cache_dir,
-                session_dir=settings.attachments.session_dir,
             )
+
+            # Plumb the parsed config back into settings so headless execution
+            # uses the CLI-overridden limits instead of the defaults.
+            if parsed_attach_cfg is not None:
+                settings.attachments = parsed_attach_cfg
 
             # ── Session persistence (SPEC-ATT-08) ─────────────────────────────
             if attach_session and _attachment_adapters:
@@ -1285,6 +1289,7 @@ from vaig.core.gke import build_gke_config as _build_gke_config
 
 def _build_and_resolve_attachments(
     *,
+    base_config: AttachmentsConfig,
     attach_sources: list[str],
     attach_names: list[str],
     max_files: int,
@@ -1298,13 +1303,11 @@ def _build_and_resolve_attachments(
     url_allowlist: list[str] | None = None,
     session_id: str | None = None,
     cache_enabled: bool = True,
-    cache_dir: Path | None = None,
-    session_dir: Path | None = None,
-) -> list[AttachmentAdapter]:
+) -> tuple[list[AttachmentAdapter], AttachmentsConfig | None]:
     """Build :class:`~vaig.core.config.AttachmentsConfig`, resolve adapters, and
     eagerly call ``list_files()`` to surface errors before any LLM call.
 
-    Returns the list of resolved adapters (may be empty).
+    Returns the list of resolved adapters (may be empty) and the built config.
     """
     import sys
 
@@ -1316,7 +1319,6 @@ def _build_and_resolve_attachments(
         URLAdapter,
         resolve_attachment,
     )
-    from vaig.core.config import AttachmentsConfig
 
     # --attach-include-everything cascades
     if include_everything:
@@ -1327,25 +1329,25 @@ def _build_and_resolve_attachments(
     else:
         binary_skip = True
 
-    cfg = AttachmentsConfig(
-        max_files_per_attachment=max_files,
-        unlimited_files=unlimited_files,
-        max_depth=max_depth,
-        follow_symlinks=follow_symlinks,
-        use_default_excludes=use_default_excludes,
-        include_everything=include_everything,
-        max_bytes_absolute=max_bytes_absolute,
-        binary_skip=binary_skip,
-        allow_http=allow_http,
-        url_allowlist=url_allowlist or [],
-        session_id=session_id,
-        cache_enabled=cache_enabled,
-        cache_dir=cache_dir,
-        session_dir=session_dir,
+    cfg = base_config.model_copy(
+        update={
+            "max_files_per_attachment": max_files,
+            "unlimited_files": unlimited_files,
+            "max_depth": max_depth,
+            "follow_symlinks": follow_symlinks,
+            "use_default_excludes": use_default_excludes,
+            "include_everything": include_everything,
+            "max_bytes_absolute": max_bytes_absolute,
+            "binary_skip": binary_skip,
+            "allow_http": allow_http,
+            "url_allowlist": url_allowlist or [],
+            "session_id": session_id,
+            "cache_enabled": cache_enabled,
+        }
     )
 
     if not attach_sources:
-        return []
+        return [], None
 
     # Pad names list to match sources length
     names: list[str | None] = list(attach_names)
@@ -1410,7 +1412,7 @@ def _build_and_resolve_attachments(
         file=sys.stderr,
     )
 
-    return cast("list[AttachmentAdapter]", adapters)
+    return cast("list[AttachmentAdapter]", adapters), cfg
 
 
 def _persist_session(

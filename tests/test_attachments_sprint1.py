@@ -408,8 +408,10 @@ class TestCLIWiring:
             (tmp_path / f"f{i}.txt").write_text(f"content {i}")
 
         from vaig.cli.commands.live import _build_and_resolve_attachments
+        from vaig.core.config import AttachmentsConfig
 
         _build_and_resolve_attachments(
+            base_config=AttachmentsConfig(),
             attach_sources=[str(tmp_path)],
             attach_names=[],
             max_files=10_000,
