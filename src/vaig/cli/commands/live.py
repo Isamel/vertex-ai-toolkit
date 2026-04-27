@@ -1319,7 +1319,6 @@ def _build_and_resolve_attachments(
         URLAdapter,
         resolve_attachment,
     )
-    from vaig.core.config import AttachmentsConfig
 
     # --attach-include-everything cascades
     if include_everything:
